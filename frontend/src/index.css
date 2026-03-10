@@ -1,0 +1,80 @@
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: #18212d;
+  background:
+    radial-gradient(circle at top left, rgba(223, 242, 255, 0.95), transparent 35%),
+    radial-gradient(circle at top right, rgba(255, 240, 220, 0.85), transparent 30%),
+    linear-gradient(180deg, #f6f9fc 0%, #eef3f7 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  margin: 0 0 8px;
+  font-size: 32px;
+}
+
+.page-header p {
+  margin: 0;
+  color: #5a6a7d;
+}
+
+.glass-card {
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 64px rgba(24, 33, 45, 0.08);
+}
+
+.stat-card .ant-statistic-content {
+  font-size: 28px;
+}
+
+.chart-card {
+  min-height: 360px;
+}
+
+.upload-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 20px;
+}
+
+.mapping-grid {
+  display: grid;
+  gap: 12px;
+}
+
+@media (max-width: 960px) {
+  .upload-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page-header {
+    flex-direction: column;
+  }
+}

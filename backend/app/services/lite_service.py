@@ -1,0 +1,491 @@
+from __future__ import annotations
+
+import csv
+import time
+from collections import Counter
+from dataclasses import dataclass
+from io import BytesIO, StringIO
+from typing import Any, Callable
+
+import pandas as pd
+from fastapi import UploadFile
+from openpyxl import Workbook
+from sqlalchemy.orm import Session
+
+from app.core.config import Settings
+from app.schemas.lite import LiteAnalyzeResponse, LitePreviewRow, LiteResultRow, LiteRunResponse, LiteRunSummary
+from app.services.lite_status_mapper import LiteStatusResult, map_route_response
+from app.services.settings_service import SettingsService
+from app.services.sf_client import SFClient, SFClientCredentials, SFClientError
+from app.utils.excel_safe import escape_excel_formula
+
+FIELD_ALIASES: dict[str, list[str]] = {
+    "order_number": [
+        "order_number",
+        "order number",
+        "order no",
+        "order_no",
+        "orderno",
+        "ordernumber",
+    ],
+    "tracking_number": [
+        "tracking_number",
+        "tracking number",
+        "tracking no",
+        "tracking_no",
+        "trackingnumber",
+        "waybill",
+        "waybill_no",
+        "tracking",
+        "mailno",
+    ],
+}
+
+EXPORT_COLUMNS = [
+    ("ORDER NUMBER", "order_number"),
+    ("TRACKING NO", "tracking_number"),
+    ("STATUS", "status"),
+    ("SF EXPRESS CODE", "sf_express_code"),
+    ("SF EXPRESS REMARK", "sf_express_remark"),
+]
+
+
+@dataclass
+class LiteInputRow:
+    order_number: str
+    tracking_number: str | None
+
+
+class LiteService:
+    def __init__(self, session: Session, settings: Settings) -> None:
+        self.session = session
+        self.settings = settings
+        self.settings_service = SettingsService(session, settings)
+
+    async def analyze_upload(
+        self,
+        upload_file: UploadFile,
+        mapping_override: dict[str, str | None] | None = None,
+        sheet_name: str | None = None,
+    ) -> LiteAnalyzeResponse:
+        file_name, content = await self._read_upload(upload_file)
+        prepared = self.prepare_content(
+            file_name=file_name,
+            content=content,
+            mapping_override=mapping_override,
+            sheet_name=sheet_name,
+            validate_required_mapping=False,
+        )
+        return self._build_analyze_response(prepared)
+
+    async def run_upload(
+        self,
+        upload_file: UploadFile,
+        mapping_override: dict[str, str | None] | None = None,
+        sheet_name: str | None = None,
+        batch_size: int = 10,
+        delay_seconds: float = 0.0,
+        language: str = "0",
+    ) -> LiteRunResponse:
+        file_name, content = await self._read_upload(upload_file)
+        prepared = self.prepare_content(
+            file_name=file_name,
+            content=content,
+            mapping_override=mapping_override,
+            sheet_name=sheet_name,
+            validate_required_mapping=True,
+        )
+        return self.run_prepared(
+            prepared=prepared,
+            batch_size=batch_size,
+            delay_seconds=delay_seconds,
+            language=language,
+        )
+
+    async def export_upload(
+        self,
+        upload_file: UploadFile,
+        mapping_override: dict[str, str | None] | None = None,
+        sheet_name: str | None = None,
+        file_format: str = "xlsx",
+        batch_size: int = 10,
+        delay_seconds: float = 0.0,
+        language: str = "0",
+    ) -> tuple[str, bytes, str]:
+        file_name, content = await self._read_upload(upload_file)
+        prepared = self.prepare_content(
+            file_name=file_name,
+            content=content,
+            mapping_override=mapping_override,
+            sheet_name=sheet_name,
+            validate_required_mapping=True,
+        )
+        result = self.run_prepared(
+            prepared=prepared,
+            batch_size=batch_size,
+            delay_seconds=delay_seconds,
+            language=language,
+        )
+        rows = [row.model_dump() for row in result.rows]
+        if file_format == "csv":
+            return self._export_csv(rows)
+        if file_format != "xlsx":
+            raise ValueError("file_format must be csv or xlsx")
+        return self._export_xlsx(rows)
+
+    def export_rows(self, rows: list[dict[str, Any]], file_format: str = "xlsx") -> tuple[str, bytes, str]:
+        if file_format == "csv":
+            return self._export_csv(rows)
+        if file_format != "xlsx":
+            raise ValueError("file_format must be csv or xlsx")
+        return self._export_xlsx(rows)
+
+    def prepare_content(
+        self,
+        file_name: str,
+        content: bytes,
+        mapping_override: dict[str, str | None] | None = None,
+        sheet_name: str | None = None,
+        validate_required_mapping: bool = True,
+    ) -> dict[str, Any]:
+        if not content:
+            raise ValueError("Uploaded file is empty")
+
+        suffix = self._suffix(file_name)
+        if suffix not in {".csv", ".xlsx", ".xls"}:
+            raise ValueError("Unsupported file type")
+
+        selected_sheet, data_frame = self._read_dataframe(content, suffix, sheet_name)
+        rows = self._serialize_rows(data_frame)
+        columns = list(data_frame.columns)
+        mapping = self._detect_mapping(columns)
+        if mapping_override:
+            mapping.update(mapping_override)
+        if validate_required_mapping and not mapping.get("order_number"):
+            raise ValueError("Could not identify an order number column")
+
+        deduped_rows: list[LiteInputRow] = []
+        preview_rows: list[dict[str, str | None]] = []
+        seen_pairs: set[tuple[str, str | None]] = set()
+        missing_order_rows = 0
+        duplicate_pairs_removed = 0
+        query_tracking_numbers: list[str] = []
+
+        for row in rows:
+            order_number = self._extract_field(row, mapping, "order_number")
+            tracking_number = self._normalize_tracking_number(self._extract_field(row, mapping, "tracking_number"))
+            if not order_number:
+                missing_order_rows += 1
+                continue
+
+            pair_key = (order_number, tracking_number)
+            if pair_key in seen_pairs:
+                duplicate_pairs_removed += 1
+                continue
+            seen_pairs.add(pair_key)
+
+            item = LiteInputRow(order_number=order_number, tracking_number=tracking_number)
+            deduped_rows.append(item)
+            if len(preview_rows) < 20:
+                preview_rows.append({"order_number": order_number, "tracking_number": tracking_number})
+            if tracking_number:
+                query_tracking_numbers.append(tracking_number)
+
+        query_tracking_numbers = list(dict.fromkeys(query_tracking_numbers))
+        no_tracking_rows = sum(1 for item in deduped_rows if not item.tracking_number)
+
+        return {
+            "file_name": file_name,
+            "selected_sheet": selected_sheet,
+            "columns": columns,
+            "mapping": mapping,
+            "total_rows": len(rows),
+            "rows": deduped_rows,
+            "preview_rows": preview_rows,
+            "missing_order_rows": missing_order_rows,
+            "duplicate_pairs_removed": duplicate_pairs_removed,
+            "query_target_count": len(query_tracking_numbers),
+            "query_tracking_numbers": query_tracking_numbers,
+            "no_tracking_rows": no_tracking_rows,
+        }
+
+    def run_prepared(
+        self,
+        prepared: dict[str, Any],
+        batch_size: int,
+        delay_seconds: float,
+        language: str,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> LiteRunResponse:
+        route_map = self._fetch_route_map(
+            tracking_numbers=prepared["query_tracking_numbers"],
+            batch_size=batch_size,
+            delay_seconds=delay_seconds,
+            language=language,
+            progress_callback=progress_callback,
+        )
+        return self._build_run_response(prepared, route_map)
+
+    def _build_analyze_response(self, prepared: dict[str, Any]) -> LiteAnalyzeResponse:
+        return LiteAnalyzeResponse(
+            file_name=prepared["file_name"],
+            selected_sheet=prepared["selected_sheet"],
+            columns=prepared["columns"],
+            detected_mapping=prepared["mapping"],
+            total_rows=prepared["total_rows"],
+            missing_order_rows=prepared["missing_order_rows"],
+            duplicate_pairs_removed=prepared["duplicate_pairs_removed"],
+            deduped_rows=len(prepared["rows"]),
+            query_target_count=prepared["query_target_count"],
+            no_tracking_rows=prepared["no_tracking_rows"],
+            preview_rows=[LitePreviewRow(**row) for row in prepared["preview_rows"]],
+        )
+
+    def _build_run_response(
+        self,
+        prepared: dict[str, Any],
+        route_map: dict[str, LiteStatusResult],
+    ) -> LiteRunResponse:
+        rows: list[LiteResultRow] = []
+        status_counts: Counter[str] = Counter()
+        for item in prepared["rows"]:
+            if not item.tracking_number:
+                result = LiteResultRow(
+                    order_number=item.order_number,
+                    tracking_number=None,
+                    status="NO_TRACKING",
+                )
+            else:
+                mapped = route_map.get(item.tracking_number)
+                if mapped is None:
+                    result = LiteResultRow(
+                        order_number=item.order_number,
+                        tracking_number=item.tracking_number,
+                        status="QUERY_FAILED",
+                        sf_express_remark="No route response returned by SF",
+                    )
+                else:
+                    result = LiteResultRow(
+                        order_number=item.order_number,
+                        tracking_number=item.tracking_number,
+                        status=mapped.status,
+                        sf_express_code=mapped.sf_express_code,
+                        sf_express_remark=mapped.sf_express_remark,
+                        last_event_time=mapped.last_event_time,
+                    )
+            rows.append(result)
+            status_counts[result.status] += 1
+
+        summary = LiteRunSummary(
+            total_rows=prepared["total_rows"],
+            missing_order_rows=prepared["missing_order_rows"],
+            duplicate_pairs_removed=prepared["duplicate_pairs_removed"],
+            deduped_rows=len(prepared["rows"]),
+            query_target_count=prepared["query_target_count"],
+            no_tracking_rows=prepared["no_tracking_rows"],
+            status_counts=dict(status_counts),
+        )
+
+        return LiteRunResponse(
+            file_name=prepared["file_name"],
+            selected_sheet=prepared["selected_sheet"],
+            detected_mapping=prepared["mapping"],
+            summary=summary,
+            rows=rows,
+        )
+
+    async def _read_upload(self, upload_file: UploadFile) -> tuple[str, bytes]:
+        file_name = upload_file.filename or "uploaded-file"
+        content = await upload_file.read()
+        return file_name, content
+
+    def _read_dataframe(self, content: bytes, suffix: str, sheet_name: str | None) -> tuple[str | None, pd.DataFrame]:
+        if suffix == ".csv":
+            data_frame = pd.read_csv(BytesIO(content), dtype=str, keep_default_na=False)
+            return None, self._normalize_dataframe(data_frame)
+
+        excel_file = pd.ExcelFile(BytesIO(content))
+        selected_sheet = sheet_name
+        if selected_sheet is None:
+            selected_sheet = self._select_sheet(excel_file)
+        data_frame = pd.read_excel(BytesIO(content), sheet_name=selected_sheet, dtype=str, keep_default_na=False)
+        return selected_sheet, self._normalize_dataframe(data_frame)
+
+    def _select_sheet(self, excel_file: pd.ExcelFile) -> str:
+        best_sheet = excel_file.sheet_names[0]
+        best_score = -1
+        for candidate in excel_file.sheet_names:
+            frame = self._normalize_dataframe(
+                pd.read_excel(excel_file, sheet_name=candidate, dtype=str, keep_default_na=False)
+            )
+            mapping = self._detect_mapping(list(frame.columns))
+            score = frame.shape[0]
+            if mapping.get("tracking_number"):
+                score += 100
+            if mapping.get("order_number"):
+                score += 1000
+            if score > best_score:
+                best_sheet = candidate
+                best_score = score
+        return best_sheet
+
+    def _normalize_dataframe(self, data_frame: pd.DataFrame) -> pd.DataFrame:
+        normalized = data_frame.copy()
+        normalized.columns = [str(column).strip() for column in normalized.columns]
+        for column in normalized.columns:
+            normalized[column] = normalized[column].astype(str).str.strip()
+            normalized.loc[normalized[column].isin(["", "nan", "None"]), column] = ""
+        return normalized
+
+    def _serialize_rows(self, data_frame: pd.DataFrame) -> list[dict[str, Any]]:
+        rows = []
+        for row in data_frame.to_dict(orient="records"):
+            rows.append({str(key): (None if value == "" else value) for key, value in row.items()})
+        return rows
+
+    def _detect_mapping(self, columns: list[str]) -> dict[str, str | None]:
+        normalized = {self._normalize(column): column for column in columns}
+        mapping: dict[str, str | None] = {}
+        for target_field, aliases in FIELD_ALIASES.items():
+            mapping[target_field] = None
+            for alias in aliases:
+                column = normalized.get(self._normalize(alias))
+                if column:
+                    mapping[target_field] = column
+                    break
+        return mapping
+
+    def _extract_field(self, row: dict[str, Any], mapping: dict[str, str | None], field_name: str) -> str | None:
+        column_name = mapping.get(field_name)
+        if not column_name:
+            return None
+        value = row.get(column_name)
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return None
+        return text
+
+    def _fetch_route_map(
+        self,
+        tracking_numbers: list[str],
+        batch_size: int,
+        delay_seconds: float,
+        language: str,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> dict[str, LiteStatusResult]:
+        if not tracking_numbers:
+            if progress_callback:
+                progress_callback(0, 0)
+            return {}
+        batch_size = max(1, min(batch_size, 10))
+        active_api_key = self.settings_service.get_active_api_key()
+        if active_api_key is None:
+            raise ValueError("No active SF API key configured")
+
+        api_key_record, secret_fields = active_api_key
+        client = SFClient(
+            self.settings,
+            SFClientCredentials(
+                partner_id=secret_fields["partner_id"],
+                checkword=secret_fields["checkword"],
+                environment=api_key_record.environment,
+            ),
+        )
+
+        total_targets = len(tracking_numbers)
+        completed_targets = 0
+        if progress_callback:
+            progress_callback(completed_targets, total_targets)
+
+        route_map: dict[str, LiteStatusResult] = {}
+        for start in range(0, len(tracking_numbers), batch_size):
+            batch = tracking_numbers[start : start + batch_size]
+            try:
+                response = client.search_routes(batch, language=language)
+                route_resps, _ = client.extract_route_payload(response)
+                batch_map = {
+                    str(item.get("mailNo") or item.get("trackingNumber") or "").strip(): item
+                    for item in route_resps
+                }
+                for tracking_number in batch:
+                    route_map[tracking_number] = map_route_response(batch_map.get(tracking_number))
+            except SFClientError as error:
+                for tracking_number in batch:
+                    route_map[tracking_number] = LiteStatusResult(
+                        status="QUERY_FAILED",
+                        sf_express_code="SF_CLIENT_ERROR",
+                        sf_express_remark=str(error),
+                        last_event_time=None,
+                        latest_event=None,
+                    )
+            except Exception as error:  # pragma: no cover - defensive local workflow
+                for tracking_number in batch:
+                    route_map[tracking_number] = LiteStatusResult(
+                        status="QUERY_FAILED",
+                        sf_express_code="UNEXPECTED_ERROR",
+                        sf_express_remark=str(error),
+                        last_event_time=None,
+                        latest_event=None,
+                    )
+
+            completed_targets += len(batch)
+            if progress_callback:
+                progress_callback(completed_targets, total_targets)
+
+            if start + batch_size < len(tracking_numbers) and delay_seconds > 0:
+                time.sleep(delay_seconds)
+        return route_map
+
+    def _export_xlsx(self, rows: list[dict[str, Any]]) -> tuple[str, bytes, str]:
+        workbook = Workbook()
+        primary_rows = [row for row in rows if row.get("status") in {"ARRIVED", "COLLECTED"}]
+        secondary_rows = [row for row in rows if row.get("status") not in {"ARRIVED", "COLLECTED"}]
+
+        worksheet = workbook.active
+        worksheet.title = "ARRIVED_COLLECTED"
+        self._append_export_rows(worksheet, primary_rows)
+
+        other_sheet = workbook.create_sheet(title="OTHER_STATUS")
+        self._append_export_rows(other_sheet, secondary_rows)
+
+        buffer = BytesIO()
+        workbook.save(buffer)
+        return (
+            "lite-tracking-results.xlsx",
+            buffer.getvalue(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def _export_csv(self, rows: list[dict[str, Any]]) -> tuple[str, bytes, str]:
+        buffer = StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=[header for header, _ in EXPORT_COLUMNS])
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({header: escape_excel_formula(row.get(field)) for header, field in EXPORT_COLUMNS})
+        return ("lite-tracking-results.csv", buffer.getvalue().encode("utf-8-sig"), "text/csv")
+
+    def _append_export_rows(self, worksheet: Any, rows: list[dict[str, Any]]) -> None:
+        worksheet.append([header for header, _ in EXPORT_COLUMNS])
+        for row in rows:
+            worksheet.append([escape_excel_formula(row.get(field)) for _, field in EXPORT_COLUMNS])
+
+    def _normalize(self, value: str) -> str:
+        return "".join(character.lower() for character in value if character.isalnum())
+
+    def _normalize_tracking_number(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = "".join(value.split()).upper()
+        return normalized or None
+
+    def _suffix(self, filename: str) -> str:
+        lowered = filename.lower()
+        if lowered.endswith(".xlsx"):
+            return ".xlsx"
+        if lowered.endswith(".xls"):
+            return ".xls"
+        if lowered.endswith(".csv"):
+            return ".csv"
+        return ""

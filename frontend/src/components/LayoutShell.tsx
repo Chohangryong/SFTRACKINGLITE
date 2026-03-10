@@ -1,0 +1,55 @@
+import { RocketOutlined, SettingOutlined } from '@ant-design/icons'
+import { Layout, Menu, Typography } from 'antd'
+import type { ReactNode } from 'react'
+import { Link, useLocation } from 'react-router-dom'
+
+const { Header, Sider, Content } = Layout
+
+export function LayoutShell({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  const selectedKey = location.pathname.startsWith('/settings') ? '/settings' : '/lite'
+
+  return (
+    <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
+      <Sider
+        width={280}
+        breakpoint="lg"
+        collapsedWidth="0"
+        style={{
+          background: 'rgba(13, 35, 48, 0.92)',
+          borderRight: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <div style={{ padding: '32px 24px 16px', color: 'white' }}>
+          <Typography.Text style={{ color: '#8fd8f1', letterSpacing: 2 }}>SF EXPRESS</Typography.Text>
+          <Typography.Title level={3} style={{ color: 'white', margin: '8px 0 0' }}>
+            Lite Tracking
+          </Typography.Title>
+          <Typography.Paragraph style={{ color: 'rgba(255,255,255,0.72)', marginTop: 12 }}>
+            Upload one file, run SF tracking, and download the latest status summary.
+          </Typography.Paragraph>
+        </div>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          style={{ background: 'transparent', borderInlineEnd: 0 }}
+          items={[
+            { key: '/lite', icon: <RocketOutlined />, label: <Link to="/lite">Lite Tracking</Link> },
+            { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">Settings</Link> },
+          ]}
+        />
+      </Sider>
+      <Layout style={{ background: 'transparent' }}>
+        <Header
+          style={{
+            background: 'transparent',
+            padding: '24px 24px 0',
+            height: 'auto',
+          }}
+        />
+        <Content style={{ padding: '0 24px 24px' }}>{children}</Content>
+      </Layout>
+    </Layout>
+  )
+}
