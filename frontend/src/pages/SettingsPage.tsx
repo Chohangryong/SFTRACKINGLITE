@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Form, Input, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import { useState } from 'react'
@@ -14,7 +14,7 @@ import type { ApiKeyCreatePayload, ApiKeyMasked } from '../types'
 
 function getErrorMessage(error: unknown) {
   if (!axios.isAxiosError(error)) {
-    return 'Request failed.'
+    return '요청에 실패했습니다.'
   }
 
   const detail = error.response?.data?.detail
@@ -26,7 +26,7 @@ function getErrorMessage(error: unknown) {
       .map((item) => `${item.loc?.join('.') ?? 'request'}: ${item.msg}`)
       .join('\n')
   }
-  return error.message || 'Request failed.'
+  return error.message || '요청에 실패했습니다.'
 }
 
 export function SettingsPage() {
@@ -42,7 +42,7 @@ export function SettingsPage() {
     mutationFn: createApiKey,
     onSuccess: () => {
       resetForm()
-      messageApi.success('API key saved.')
+      messageApi.success('API KEY를 저장했습니다.')
       void queryClient.invalidateQueries({ queryKey: ['api-keys'] })
     },
     onError: (error) => {
@@ -55,7 +55,7 @@ export function SettingsPage() {
       updateApiKey(apiKeyId, payload),
     onSuccess: () => {
       resetForm()
-      messageApi.success('API key updated.')
+      messageApi.success('API KEY를 수정했습니다.')
       void queryClient.invalidateQueries({ queryKey: ['api-keys'] })
     },
     onError: (error) => {
@@ -70,6 +70,7 @@ export function SettingsPage() {
         resetForm()
       }
       void queryClient.invalidateQueries({ queryKey: ['api-keys'] })
+      messageApi.success('API KEY를 삭제했습니다.')
     },
     onError: (error) => {
       messageApi.error(getErrorMessage(error))
@@ -79,8 +80,11 @@ export function SettingsPage() {
   const testKeyMutation = useMutation({
     mutationFn: testApiKey,
     onSuccess: () => {
-      messageApi.success('API test request sent.')
+      messageApi.success('API 연결 테스트를 요청했습니다.')
       void queryClient.invalidateQueries({ queryKey: ['api-keys'] })
+    },
+    onError: (error) => {
+      messageApi.error(getErrorMessage(error))
     },
   })
 
@@ -130,12 +134,12 @@ export function SettingsPage() {
       {contextHolder}
       <div className="page-header">
         <div>
-          <Typography.Title level={1}>Settings</Typography.Title>
-          <Typography.Paragraph>Manage the SF API key used by Lite Tracking.</Typography.Paragraph>
+          <Typography.Title level={1}>설정</Typography.Title>
+          <Typography.Paragraph>SF Express Tracking 조회를 위한 API KEY를 관리하는 화면입니다.</Typography.Paragraph>
         </div>
       </div>
 
-      <Card className="glass-card" title="SF API Key">
+      <Card className="glass-card" title="SF Express API KEY">
         <Form
           form={apiKeyForm}
           layout="vertical"
@@ -143,42 +147,42 @@ export function SettingsPage() {
           onFinish={handleSubmit}
         >
           <Space align="start" wrap>
-            <Form.Item label="Label" name="label" rules={[{ required: true }]}>
+            <Form.Item label="라벨" name="label" rules={[{ required: true, message: '라벨을 입력하세요.' }]}>
               <Input style={{ width: 180 }} />
             </Form.Item>
             <Form.Item
-              label="Environment"
+              label="환경"
               name="environment"
-              rules={[{ required: true }]}
-              extra={isEditing ? 'Environment is fixed after create.' : undefined}
+              rules={[{ required: true, message: '환경을 선택하세요.' }]}
+              extra={isEditing ? '생성 후에는 환경을 변경할 수 없습니다.' : undefined}
             >
               <Select
                 style={{ width: 140 }}
                 disabled={isEditing}
                 options={[
-                  { label: 'Sandbox', value: 'sandbox' },
-                  { label: 'Production', value: 'production' },
+                  { label: '샌드박스', value: 'sandbox' },
+                  { label: '운영', value: 'production' },
                 ]}
               />
             </Form.Item>
             <Form.Item
               label="Partner ID"
               name="partner_id"
-              rules={isEditing ? [] : [{ required: true }]}
-              extra={isEditing ? 'Leave blank to keep the current Partner ID.' : undefined}
+              rules={isEditing ? [] : [{ required: true, message: 'Partner ID를 입력하세요.' }]}
+              extra={isEditing ? '비워두면 현재 Partner ID를 유지합니다.' : undefined}
             >
-              <Input style={{ width: 180 }} placeholder={isEditing ? 'Keep current value' : undefined} />
+              <Input style={{ width: 180 }} placeholder={isEditing ? '현재 값 유지' : undefined} />
             </Form.Item>
             <Form.Item
               label="Checkword"
               name="checkword"
-              rules={isEditing ? [] : [{ required: true }]}
-              extra={isEditing ? 'Leave blank to keep the current Checkword.' : undefined}
+              rules={isEditing ? [] : [{ required: true, message: 'Checkword를 입력하세요.' }]}
+              extra={isEditing ? '비워두면 현재 Checkword를 유지합니다.' : undefined}
             >
-              <Input.Password style={{ width: 220 }} placeholder={isEditing ? 'Keep current value' : undefined} />
+              <Input.Password style={{ width: 220 }} placeholder={isEditing ? '현재 값 유지' : undefined} />
             </Form.Item>
-            <Form.Item label="Active" name="is_active" valuePropName="checked">
-              <Switch />
+            <Form.Item label="사용 여부" name="is_active" valuePropName="checked">
+              <Switch checkedChildren="사용" unCheckedChildren="중지" />
             </Form.Item>
             <Form.Item label=" ">
               <Space>
@@ -187,13 +191,9 @@ export function SettingsPage() {
                   htmlType="submit"
                   loading={createKeyMutation.isPending || updateKeyMutation.isPending}
                 >
-                  {isEditing ? 'Update' : 'Save'}
+                  {isEditing ? '수정' : '저장'}
                 </Button>
-                {isEditing && (
-                  <Button onClick={resetForm}>
-                    Cancel
-                  </Button>
-                )}
+                {isEditing && <Button onClick={resetForm}>취소</Button>}
               </Space>
             </Form.Item>
           </Space>
@@ -203,30 +203,30 @@ export function SettingsPage() {
           dataSource={apiKeysQuery.data ?? []}
           pagination={false}
           columns={[
-            { title: 'Label', dataIndex: 'label' },
-            { title: 'Environment', dataIndex: 'environment' },
+            { title: '라벨', dataIndex: 'label' },
+            { title: '환경', dataIndex: 'environment' },
             {
-              title: 'Active',
+              title: '사용 여부',
               dataIndex: 'is_active',
-              render: (value: boolean) => (value ? <Tag color="green">Active</Tag> : <Tag>Inactive</Tag>),
+              render: (value: boolean) => (value ? <Tag color="green">사용중</Tag> : <Tag>중지</Tag>),
             },
             {
-              title: 'Secrets',
+              title: '등록 정보',
               render: (_, record) => `${record.key_fields.partner_id} / ${record.key_fields.checkword}`,
             },
-            { title: 'Test Result', dataIndex: 'test_result' },
+            { title: '테스트 결과', dataIndex: 'test_result' },
             {
-              title: 'Actions',
+              title: '작업',
               render: (_, record) => (
                 <Space>
                   <Button size="small" onClick={() => handleEdit(record)}>
-                    Edit
+                    수정
                   </Button>
                   <Button size="small" onClick={() => testKeyMutation.mutate(record.id)}>
-                    Test
+                    테스트
                   </Button>
                   <Button danger size="small" onClick={() => deleteKeyMutation.mutate(record.id)}>
-                    Delete
+                    삭제
                   </Button>
                 </Space>
               ),
@@ -237,3 +237,4 @@ export function SettingsPage() {
     </Space>
   )
 }
+

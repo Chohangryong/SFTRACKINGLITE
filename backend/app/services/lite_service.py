@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import time
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -55,6 +56,19 @@ EXPORT_COLUMNS = [
     ("송장상태", "status"),
     ("택배사최신상태코드", "sf_express_code"),
     ("택배사최신REMARK", "sf_express_remark"),
+]
+
+UNKNOWN_LOG_COLUMNS = [
+    ("쇼핑몰오더번호", "order_number"),
+    ("송장번호", "tracking_number"),
+    ("송장상태", "status"),
+    ("택배사최신상태코드", "sf_express_code"),
+    ("택배사최신REMARK", "sf_express_remark"),
+    ("최신이벤트일시", "last_event_time"),
+    ("OP CODE", "op_code"),
+    ("1차상태코드", "first_status_code"),
+    ("2차상태코드", "secondary_status_code"),
+    ("최신이벤트원문", "latest_event_raw"),
 ]
 
 EXPORT_STATUS_LABELS = {
@@ -288,6 +302,7 @@ class LiteService:
                         sf_express_code=mapped.sf_express_code,
                         sf_express_remark=mapped.sf_express_remark,
                         last_event_time=mapped.last_event_time,
+                        latest_event=mapped.latest_event,
                     )
             rows.append(result)
             status_counts[result.status] += 1
@@ -494,6 +509,7 @@ class LiteService:
         workbook = Workbook()
         primary_rows = [row for row in rows if row.get("status") in {"ARRIVED", "COLLECTED"}]
         secondary_rows = [row for row in rows if row.get("status") not in {"ARRIVED", "COLLECTED"}]
+        unknown_rows = [row for row in rows if row.get("status") == "UNKNOWN"]
 
         worksheet = workbook.active
         worksheet.title = "ARRIVED_COLLECTED"
@@ -501,6 +517,14 @@ class LiteService:
 
         other_sheet = workbook.create_sheet(title="OTHER_STATUS")
         self._append_export_rows(other_sheet, secondary_rows)
+
+        if unknown_rows:
+            unknown_sheet = workbook.create_sheet(title="UNKNOWN_LOG")
+            self._append_export_rows(
+                unknown_sheet,
+                self._build_unknown_log_rows(unknown_rows),
+                columns=UNKNOWN_LOG_COLUMNS,
+            )
 
         buffer = BytesIO()
         workbook.save(buffer)
@@ -523,18 +547,47 @@ class LiteService:
             )
         return ("lite-tracking-results.csv", buffer.getvalue().encode("utf-8-sig"), "text/csv")
 
-    def _append_export_rows(self, worksheet: Any, rows: list[dict[str, Any]]) -> None:
-        worksheet.append([header for header, _ in EXPORT_COLUMNS])
+    def _append_export_rows(
+        self,
+        worksheet: Any,
+        rows: list[dict[str, Any]],
+        columns: list[tuple[str, str]] = EXPORT_COLUMNS,
+    ) -> None:
+        worksheet.append([header for header, _ in columns])
         for row in rows:
-            worksheet.append(
-                [escape_excel_formula(self._export_value(field, row.get(field))) for _, field in EXPORT_COLUMNS]
-            )
+            worksheet.append([escape_excel_formula(self._export_value(field, row.get(field))) for _, field in columns])
         self._style_export_sheet(worksheet)
 
     def _export_value(self, field: str, value: Any) -> Any:
         if field == "status":
             return EXPORT_STATUS_LABELS.get(str(value), value)
         return value
+
+    def _build_unknown_log_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        log_rows: list[dict[str, Any]] = []
+        for row in rows:
+            latest_event = row.get("latest_event") or {}
+            log_rows.append(
+                {
+                    "order_number": row.get("order_number"),
+                    "tracking_number": row.get("tracking_number"),
+                    "status": row.get("status"),
+                    "sf_express_code": row.get("sf_express_code"),
+                    "sf_express_remark": row.get("sf_express_remark"),
+                    "last_event_time": row.get("last_event_time"),
+                    "op_code": latest_event.get("opCode") or latest_event.get("opcode"),
+                    "first_status_code": latest_event.get("firstStatusCode") or latest_event.get("first_status_code"),
+                    "secondary_status_code": (
+                        latest_event.get("secondaryStatusCode")
+                        or latest_event.get("secondStatusCode")
+                        or latest_event.get("secondary_status_code")
+                    ),
+                    "latest_event_raw": json.dumps(latest_event, ensure_ascii=False, sort_keys=True)
+                    if latest_event
+                    else None,
+                }
+            )
+        return log_rows
 
     def _style_export_sheet(self, worksheet: Any) -> None:
         for cell in worksheet[1]:

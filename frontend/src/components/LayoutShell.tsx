@@ -26,7 +26,7 @@ export function LayoutShell({ children }: { children: ReactNode }) {
             SF Express 송장 조회
           </Typography.Title>
           <Typography.Paragraph style={{ color: 'rgba(255,255,255,0.72)', marginTop: 12 }}>
-            오더 파일을 업로드하고 SF Express 최신 배송 상태를 조회한 뒤 바로 다운로드합니다.
+            쇼핑몰 오더 엑셀파일을 업로드하여 송장번호가 있는 건을 대상으로 배송상태를 조회할 수 있습니다.
           </Typography.Paragraph>
         </div>
         <Menu

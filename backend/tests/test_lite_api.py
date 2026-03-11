@@ -287,6 +287,83 @@ def test_lite_export_localizes_query_unavailable_status(client, mocker) -> None:
     assert secondary_sheet["C2"].value == "\uC870\uD68C\uBD88\uAC00"
 
 
+def test_lite_export_adds_unknown_log_sheet(client, mocker) -> None:
+    client.post(
+        "/api/settings/api-keys",
+        json={
+            "label": "Production",
+            "environment": "production",
+            "partner_id": "PARTNER",
+            "checkword": "CHECKWORD",
+            "is_active": True,
+        },
+    )
+    mocker.patch(
+        "app.services.sf_client.SFClient.search_routes",
+        return_value={
+            "apiResultCode": "A1000",
+            "apiResultData": json.dumps(
+                {
+                    "errorCode": "S0000",
+                    "routeResps": [
+                        {
+                            "mailNo": "SFUNKNOWN",
+                            "routes": [
+                                {
+                                    "acceptTime": "2026-03-10 10:45:00",
+                                    "opCode": "999",
+                                    "firstStatusCode": "9",
+                                    "secondaryStatusCode": "909",
+                                    "remark": "Unmapped state",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+        },
+    )
+
+    response = client.post(
+        "/api/lite/export",
+        data={"file_format": "xlsx"},
+        files={
+            "file": (
+                "orders.csv",
+                "Order Number,Tracking Number\nORDER-1,SFUNKNOWN\n".encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content))
+    assert workbook.sheetnames == ["ARRIVED_COLLECTED", "OTHER_STATUS", "UNKNOWN_LOG"]
+
+    other_sheet = workbook["OTHER_STATUS"]
+    unknown_sheet = workbook["UNKNOWN_LOG"]
+
+    assert other_sheet["C2"].value == "UNKNOWN"
+    assert [cell.value for cell in unknown_sheet[1]] == [
+        "쇼핑몰오더번호",
+        "송장번호",
+        "송장상태",
+        "택배사최신상태코드",
+        "택배사최신REMARK",
+        "최신이벤트일시",
+        "OP CODE",
+        "1차상태코드",
+        "2차상태코드",
+        "최신이벤트원문",
+    ]
+    assert unknown_sheet["A2"].value == "ORDER-1"
+    assert unknown_sheet["C2"].value == "UNKNOWN"
+    assert unknown_sheet["G2"].value == "999"
+    assert unknown_sheet["H2"].value == "9"
+    assert unknown_sheet["I2"].value == "909"
+    assert '"opCode": "999"' in unknown_sheet["J2"].value
+
+
 def test_lite_run_marks_partial_batch_missing_as_query_failed(client, mocker) -> None:
     client.post(
         "/api/settings/api-keys",

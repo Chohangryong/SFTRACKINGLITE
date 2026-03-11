@@ -107,3 +107,21 @@ def test_map_route_response_covers_arrived_shipped_and_exception_rules() -> None
     assert shipped.status == "SHIPPED"
     assert canceled.status == "CANCELED"
     assert exception.status == "EXCEPTION"
+
+
+def test_map_route_response_uses_unknown_for_unmapped_latest_state() -> None:
+    result = map_route_response(
+        {
+            "routes": [
+                {
+                    "acceptTime": "2026-03-10 14:00:00",
+                    "opCode": "999",
+                    "firstStatusCode": "9",
+                    "secondaryStatusCode": "909",
+                    "remark": "Unmapped state",
+                }
+            ]
+        }
+    )
+
+    assert result.status == "UNKNOWN"

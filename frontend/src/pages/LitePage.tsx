@@ -163,7 +163,7 @@ export function LitePage() {
       </div>
 
       <div className="upload-grid">
-        <Card className="glass-card" title="1. 오더 정보 엑셀 업로드">
+        <Card className="glass-card" title="1. 오더 정보 엑셀 업로드" style={{ height: '100%' }}>
           <Upload.Dragger {...analyzeUploadProps}>
             <p>CSV/XLSX/XLS 파일을 여기에 끌어놓거나 클릭해서 업로드하세요.</p>
           </Upload.Dragger>
@@ -179,8 +179,8 @@ export function LitePage() {
           )}
         </Card>
 
-        <Card className="glass-card" title="2. SF Express 조회">
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <Card className="glass-card" title="2. SF Express 조회" style={{ height: '100%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%', height: '100%' }}>
             <Space wrap>
               <Button
                 type="primary"
@@ -221,41 +221,49 @@ export function LitePage() {
                 </Typography.Text>
               </div>
             )}
-          </Space>
+
+            {result && (
+              <>
+                <Typography.Title level={5} style={{ margin: 0 }}>
+                  조회 결과 요약
+                </Typography.Title>
+                <Descriptions bordered size="small" column={1} style={{ marginBottom: 16 }}>
+                  <Descriptions.Item label="조회 Tracking No 건수">{result.summary.query_target_count}</Descriptions.Item>
+                </Descriptions>
+
+                <div className="summary-table-wrap">
+                  <Table
+                    className="compact-summary-table"
+                    rowKey="status"
+                    pagination={false}
+                    size="small"
+                    sticky
+                    dataSource={Object.entries(result.summary.status_counts).map(([status, count]) => ({
+                      key: status,
+                      status,
+                      count,
+                    }))}
+                    columns={[
+                      {
+                        title: '상태',
+                        dataIndex: 'status',
+                        render: (status: string) => {
+                          const meta = statusMeta(status)
+                          return <Tag color={meta.color}>{meta.label}</Tag>
+                        },
+                      },
+                      {
+                        title: '건수',
+                        dataIndex: 'count',
+                      },
+                    ]}
+                  />
+                </div>
+              </>
+            )}
+          </div>
         </Card>
       </div>
-
-      {result && (
-        <Card className="glass-card" title="3. 조회 결과 요약">
-          <Descriptions bordered size="small" column={1} style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="조회 Tracking No 건수">{result.summary.query_target_count}</Descriptions.Item>
-          </Descriptions>
-
-          <Table
-            rowKey="status"
-            pagination={false}
-            dataSource={Object.entries(result.summary.status_counts).map(([status, count]) => ({
-              key: status,
-              status,
-              count,
-            }))}
-            columns={[
-              {
-                title: '상태',
-                dataIndex: 'status',
-                render: (status: string) => {
-                  const meta = statusMeta(status)
-                  return <Tag color={meta.color}>{meta.label}</Tag>
-                },
-              },
-              {
-                title: '건수',
-                dataIndex: 'count',
-              },
-            ]}
-          />
-        </Card>
-      )}
     </Space>
   )
 }

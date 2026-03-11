@@ -111,7 +111,7 @@ def map_route_response(route_resp: dict[str, Any] | None) -> LiteStatusResult:
         elif contains_any(remark, COLLECTED_REMARK_TERMS):
             status = "COLLECTED"
         else:
-            status = "EXCEPTION"
+            status = "UNKNOWN"
         return LiteStatusResult(status, sf_code, remark, event_time, latest_event)
 
     if combo in ARRIVED_COMBOS:
@@ -131,10 +131,10 @@ def map_route_response(route_resp: dict[str, Any] | None) -> LiteStatusResult:
         return LiteStatusResult(status, sf_code, remark, event_time, latest_event)
 
     if combo[0] == "517":
-        status = "SHIPPED" if contains_any(remark, TRANSFER_REQUEST_REMARK_TERMS) else "EXCEPTION"
+        status = "SHIPPED" if contains_any(remark, TRANSFER_REQUEST_REMARK_TERMS) else "UNKNOWN"
         return LiteStatusResult(status, sf_code, remark, event_time, latest_event)
 
-    return LiteStatusResult("EXCEPTION", sf_code, remark, event_time, latest_event)
+    return LiteStatusResult("UNKNOWN", sf_code, remark, event_time, latest_event)
 
 
 def latest_route_event(routes: list[dict[str, Any]]) -> dict[str, Any]:

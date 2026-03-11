@@ -51,6 +51,7 @@ export interface LiteResultRow {
   sf_express_code?: string | null
   sf_express_remark?: string | null
   last_event_time?: string | null
+  latest_event?: Record<string, unknown> | null
 }
 
 export interface LiteRunSummary {

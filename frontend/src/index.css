@@ -62,11 +62,61 @@ body {
   display: grid;
   grid-template-columns: 1.2fr 0.8fr;
   gap: 20px;
+  align-items: stretch;
+}
+
+.upload-grid > .glass-card {
+  height: 100%;
 }
 
 .mapping-grid {
   display: grid;
   gap: 12px;
+}
+
+.compact-summary-table .ant-table-thead > tr > th,
+.compact-summary-table .ant-table-tbody > tr > td {
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+}
+
+.compact-summary-table .ant-tag {
+  margin-inline-end: 0;
+}
+
+.summary-table-wrap {
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(90, 106, 125, 0.45) transparent;
+}
+
+.summary-table-wrap::-webkit-scrollbar {
+  width: 6px;
+}
+
+.summary-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.summary-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(90, 106, 125, 0.45);
+  border-radius: 999px;
+}
+
+.summary-table-wrap .ant-table-wrapper,
+.summary-table-wrap .ant-table-container {
+  height: 100%;
+}
+
+.summary-table-wrap .ant-table-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.summary-table-wrap .ant-table-thead > tr > th {
+  background: rgba(255, 255, 255, 0.96);
 }
 
 @media (max-width: 960px) {

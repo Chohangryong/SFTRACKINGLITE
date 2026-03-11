@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ class LiteResultRow(BaseModel):
     sf_express_code: str | None = None
     sf_express_remark: str | None = None
     last_event_time: datetime | None = None
+    latest_event: dict[str, Any] | None = None
 
 
 class LiteRunSummary(BaseModel):

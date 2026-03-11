@@ -16,6 +16,7 @@ describe('statusMeta', () => {
     expect(statusMeta('COLLECTED')).toEqual({ label: 'Collected', color: 'green' })
     expect(statusMeta('SHIPPED')).toEqual({ label: 'Shipped', color: 'processing' })
     expect(statusMeta('CANCELED')).toEqual({ label: 'Canceled', color: 'red' })
+    expect(statusMeta('UNKNOWN')).toEqual({ label: 'UNKNOWN', color: 'purple' })
   })
 
   it('falls back to the raw status for unknown values', () => {
