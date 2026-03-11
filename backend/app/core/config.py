@@ -1,10 +1,31 @@
 from __future__ import annotations
 
+import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+APP_DATA_DIR_NAME = "SFTrackingLite"
+
+
+def _default_data_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            return Path(local_appdata) / APP_DATA_DIR_NAME
+        return Path.home() / "AppData" / "Local" / APP_DATA_DIR_NAME
+    return Path(__file__).resolve().parents[3] / "data"
+
+
+def _default_frontend_dist_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        bundle_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        return bundle_root / "frontend" / "dist"
+    return Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 
 class Settings(BaseSettings):
@@ -13,17 +34,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "SF Express Tracking Dashboard"
+    app_name: str = "SF Express Tracking Lite"
     api_prefix: str = "/api"
     environment: str = "development"
     host: str = "127.0.0.1"
     port: int = 8000
-    data_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[3] / "data")
+    data_dir: Path = Field(default_factory=_default_data_dir)
     upload_dir: Path | None = None
     database_path: Path | None = None
-    frontend_dist_dir: Path = Field(
-        default_factory=lambda: Path(__file__).resolve().parents[3] / "frontend" / "dist"
-    )
+    frontend_dist_dir: Path = Field(default_factory=_default_frontend_dist_dir)
     export_dir: Path | None = None
     enable_scheduler: bool = True
     default_language: str = "zh-CN"

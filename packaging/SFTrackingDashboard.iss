@@ -1,21 +1,22 @@
 [Setup]
-AppName=SF Tracking Dashboard
+AppId={{7D770166-86C6-44D6-B291-4D8D6F5CC8C8}}
+AppName=SF Express Tracking Lite
 AppVersion=0.1.0
-DefaultDirName={autopf}\SFTrackingDashboard
-DefaultGroupName=SF Tracking Dashboard
+DefaultDirName={autopf64}\SFTrackingLite
+DefaultGroupName=SF Express Tracking Lite
 OutputDir=..\build
-OutputBaseFilename=SFTrackingDashboardSetup
+OutputBaseFilename=SFTrackingLiteSetup
 Compression=lzma
 SolidCompression=yes
+ArchitecturesInstallIn64BitMode=x64compatible
+WizardStyle=modern
 
 [Files]
-Source: "..\dist\SFTrackingDashboard.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\frontend\dist\*"; DestDir: "{app}\frontend\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\SFTrackingLite\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\SF Tracking Dashboard"; Filename: "{app}\SFTrackingDashboard.exe"
-Name: "{commondesktop}\SF Tracking Dashboard"; Filename: "{app}\SFTrackingDashboard.exe"
+Name: "{group}\SF Express Tracking Lite"; Filename: "{app}\SFTrackingLite.exe"
+Name: "{commondesktop}\SF Express Tracking Lite"; Filename: "{app}\SFTrackingLite.exe"
 
 [Run]
-Filename: "{app}\SFTrackingDashboard.exe"; Description: "Launch SF Tracking Dashboard"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\SFTrackingLite.exe"; Description: "SF Express Tracking Lite 실행"; Flags: nowait postinstall skipifsilent

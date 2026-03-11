@@ -5,6 +5,7 @@ Local dashboard for SF Express order and tracking relationships.
 ## Guides
 
 - Korean usage and feature guide: [docs/SF_TRACKING_DASHBOARD_GUIDE_ko.md](docs/SF_TRACKING_DASHBOARD_GUIDE_ko.md)
+- Windows packaging and update guide: [docs/WINDOWS_PACKAGING_AND_UPDATE_ko.md](docs/WINDOWS_PACKAGING_AND_UPDATE_ko.md)
 
 ## Commands
 

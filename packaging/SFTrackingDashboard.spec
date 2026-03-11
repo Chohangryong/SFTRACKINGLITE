@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
-project_root = Path(__file__).resolve().parents[1]
+project_root = Path(SPECPATH).resolve().parents[0]
+backend_root = project_root / "backend"
 
 datas = [
     (str(project_root / "frontend" / "dist"), "frontend/dist"),
-    (str(project_root / "data"), "data"),
 ]
 
 hiddenimports = [
@@ -15,8 +15,8 @@ hiddenimports = [
 ]
 
 a = Analysis(
-    [str(project_root / "backend" / "run.py")],
-    pathex=[str(project_root / "backend")],
+    [str(backend_root / "launcher.py")],
+    pathex=[str(backend_root), str(backend_root / ".deps")],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -30,13 +30,22 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
-    name="SFTrackingDashboard",
+    exclude_binaries=True,
+    name="SFTrackingLite",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     console=False,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="SFTrackingLite",
 )
