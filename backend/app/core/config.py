@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     default_language: str = "zh-CN"
     request_timeout_seconds: int = 30
     lite_fetch_concurrency: int = 2
+    lite_result_ttl_minutes: int = 10
     upload_preview_rows: int = 100
     upload_max_size_mb: int = 20
     frontend_origin: str = "http://127.0.0.1:5173"
@@ -54,6 +55,10 @@ class Settings(BaseSettings):
         return self.data_dir / "export_presets.json"
 
     @property
+    def lite_job_dir(self) -> Path:
+        return self.data_dir / "lite_jobs"
+
+    @property
     def dev_cipher_key_path(self) -> Path:
         return self.data_dir / ".cipher.key"
 
@@ -65,6 +70,7 @@ class Settings(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.export_dir.mkdir(parents=True, exist_ok=True)
+        self.lite_job_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

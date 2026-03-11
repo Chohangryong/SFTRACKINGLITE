@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -498,3 +499,148 @@ def test_lite_job_progress_is_monotonic_under_parallel_batches(client, mocker) -
     assert completed_values == sorted(completed_values)
     assert completed_values[-1] == 21
     assert progress_values[-1] == 100
+
+
+def test_lite_job_download_uses_stored_result_json(client, mocker) -> None:
+    client.post(
+        "/api/settings/api-keys",
+        json={
+            "label": "Production",
+            "environment": "production",
+            "partner_id": "PARTNER",
+            "checkword": "CHECKWORD",
+            "is_active": True,
+        },
+    )
+    mocker.patch(
+        "app.services.sf_client.SFClient.search_routes",
+        return_value={
+            "apiResultCode": "A1000",
+            "apiResultData": json.dumps(
+                {
+                    "errorCode": "S0000",
+                    "routeResps": [
+                        {
+                            "mailNo": "SF123",
+                            "routes": [
+                                {
+                                    "acceptTime": "2026-03-10 10:00:00",
+                                    "opCode": "80",
+                                    "firstStatusCode": "4",
+                                    "secondaryStatusCode": "401",
+                                    "remark": "\u5df2\u6d3e\u9001\u81f3\uff08\u987a\u4e30\u81ea\u52a9\u67dc\uff09",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+        },
+    )
+
+    create_response = client.post(
+        "/api/lite/jobs",
+        files={
+            "file": (
+                "orders.csv",
+                "Order Number,Tracking Number\nORDER-1,SF123\n".encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+
+    assert create_response.status_code == 200
+    job_id = create_response.json()["job_id"]
+
+    status = "queued"
+    payload = {}
+    for _ in range(20):
+        poll_response = client.get(f"/api/lite/jobs/{job_id}")
+        assert poll_response.status_code == 200
+        payload = poll_response.json()
+        status = payload["status"]
+        if status == "completed":
+            break
+        time.sleep(0.05)
+
+    assert status == "completed"
+    assert payload["expires_at"] is not None
+    assert payload["result"]["rows"] == []
+
+    download_response = client.get(f"/api/lite/jobs/{job_id}/download", params={"file_format": "xlsx"})
+    assert download_response.status_code == 200
+    workbook = load_workbook(BytesIO(download_response.content))
+    assert workbook["ARRIVED_COLLECTED"]["A2"].value == "ORDER-1"
+
+    export_file = client.app.state.settings.lite_job_dir / job_id / "result.xlsx"
+    assert export_file.exists() is True
+
+
+def test_lite_job_download_returns_410_after_ttl_expiry(client, mocker) -> None:
+    client.post(
+        "/api/settings/api-keys",
+        json={
+            "label": "Production",
+            "environment": "production",
+            "partner_id": "PARTNER",
+            "checkword": "CHECKWORD",
+            "is_active": True,
+        },
+    )
+    mocker.patch(
+        "app.services.sf_client.SFClient.search_routes",
+        return_value={
+            "apiResultCode": "A1000",
+            "apiResultData": json.dumps(
+                {
+                    "errorCode": "S0000",
+                    "routeResps": [
+                        {
+                            "mailNo": "SF123",
+                            "routes": [
+                                {
+                                    "acceptTime": "2026-03-10 10:00:00",
+                                    "opCode": "634",
+                                    "firstStatusCode": "3",
+                                    "secondaryStatusCode": "301",
+                                    "remark": "\u5feb\u4ef6\u6b63\u5728\u6d3e\u9001\u9014\u4e2d",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+        },
+    )
+
+    create_response = client.post(
+        "/api/lite/jobs",
+        files={
+            "file": (
+                "orders.csv",
+                "Order Number,Tracking Number\nORDER-1,SF123\n".encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+    assert create_response.status_code == 200
+    job_id = create_response.json()["job_id"]
+
+    status = "queued"
+    for _ in range(20):
+        poll_response = client.get(f"/api/lite/jobs/{job_id}")
+        assert poll_response.status_code == 200
+        status = poll_response.json()["status"]
+        if status == "completed":
+            break
+        time.sleep(0.05)
+
+    assert status == "completed"
+
+    meta_path = client.app.state.settings.lite_job_dir / job_id / "meta.json"
+    meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta_payload["expires_at"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    download_response = client.get(f"/api/lite/jobs/{job_id}/download", params={"file_format": "xlsx"})
+    assert download_response.status_code == 410

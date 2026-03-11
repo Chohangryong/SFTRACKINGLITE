@@ -50,6 +50,7 @@ class SFClient:
 
     @staticmethod
     def create_http_client(settings: Settings) -> httpx.Client:
+        # Lite 한 번 실행 동안 같은 Client를 재사용해 연결 비용을 줄인다.
         return httpx.Client(
             timeout=settings.request_timeout_seconds,
             verify=build_ssl_verify(),
@@ -78,6 +79,7 @@ class SFClient:
             return response.json()
 
     def search_routes(self, tracking_numbers: list[str], language: str | None = None) -> dict[str, Any]:
+        # SF 배치 조회는 trackingNumber를 문자열 결합이 아니라 배열로 보내야 정상 매칭된다.
         msg_data = {
             "trackingType": "1",
             "trackingNumber": tracking_numbers,

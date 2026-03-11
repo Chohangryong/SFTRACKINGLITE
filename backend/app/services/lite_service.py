@@ -29,6 +29,7 @@ PARTIAL_MISSING_CODE = "SF_PARTIAL_MISSING"
 PARTIAL_MISSING_REMARK = "SF batch response missing tracking number"
 
 FIELD_ALIASES: dict[str, list[str]] = {
+    # 고객사마다 컬럼명이 달라서 대표 별칭을 넓게 받아 자동 감지한다.
     "order_number": [
         "order_number",
         "order number",
@@ -201,6 +202,9 @@ class LiteService:
         duplicate_pairs_removed = 0
         query_tracking_numbers: list[str] = []
 
+        # 업로드 원본은 주문 상세 행 기준이므로
+        # 주문번호 없는 행 제거 -> (주문번호, 송장번호) 기준 중복 제거 -> 조회용 송장만 unique 추출
+        # 순서로 정리한다.
         for row in rows:
             order_number = self._extract_field(row, mapping, "order_number")
             tracking_number = self._normalize_tracking_number(self._extract_field(row, mapping, "tracking_number"))
@@ -431,6 +435,8 @@ class LiteService:
         concurrency = max(1, min(self.settings.lite_fetch_concurrency, MAX_LITE_FETCH_CONCURRENCY))
         batches = [tracking_numbers[start : start + batch_size] for start in range(0, len(tracking_numbers), batch_size)]
 
+        # SF는 배치 10건까지가 안정적이어서 10건 단위로 끊고,
+        # 한 번의 run 안에서는 같은 HTTP Client를 재사용한다.
         with SFClient.create_http_client(self.settings) as http_client:
             client = SFClient(
                 self.settings,
@@ -449,6 +455,7 @@ class LiteService:
                     batch = futures[future]
                     batch_result = future.result()
                     route_map.update(batch_result)
+                    # 병렬 실행이어도 "배치 완료 수" 기준으로만 진행률을 올려야 역행이 생기지 않는다.
                     completed_targets += len(batch)
                     if progress_callback:
                         progress_callback(completed_targets, total_targets)
@@ -472,6 +479,8 @@ class LiteService:
             for tracking_number in batch:
                 route_resp = batch_map.get(tracking_number)
                 if route_resp is None:
+                    # SF가 배치 응답에서 특정 송장을 빠뜨리는 경우가 있어,
+                    # 이런 건 NO_ROUTE가 아니라 조회 실패로 남긴다.
                     results[tracking_number] = LiteStatusResult(
                         status="QUERY_FAILED",
                         sf_express_code=PARTIAL_MISSING_CODE,
@@ -507,6 +516,7 @@ class LiteService:
 
     def _export_xlsx(self, rows: list[dict[str, Any]]) -> tuple[str, bytes, str]:
         workbook = Workbook()
+        # 운영자가 가장 먼저 보는 상태를 분리하려고 도착/수취완료 시트를 따로 둔다.
         primary_rows = [row for row in rows if row.get("status") in {"ARRIVED", "COLLECTED"}]
         secondary_rows = [row for row in rows if row.get("status") not in {"ARRIVED", "COLLECTED"}]
         unknown_rows = [row for row in rows if row.get("status") == "UNKNOWN"]
@@ -519,6 +529,7 @@ class LiteService:
         self._append_export_rows(other_sheet, secondary_rows)
 
         if unknown_rows:
+            # UNKNOWN은 나중에 매핑 규칙을 보강해야 하므로 최신 이벤트 원문까지 별도 시트로 남긴다.
             unknown_sheet = workbook.create_sheet(title="UNKNOWN_LOG")
             self._append_export_rows(
                 unknown_sheet,
@@ -567,6 +578,7 @@ class LiteService:
         log_rows: list[dict[str, Any]] = []
         for row in rows:
             latest_event = row.get("latest_event") or {}
+            # UNKNOWN 원인은 코드 조합만 보면 부족할 수 있어서 최신 이벤트 원문을 같이 저장한다.
             log_rows.append(
                 {
                     "order_number": row.get("order_number"),
@@ -595,6 +607,8 @@ class LiteService:
             cell.font = EXPORT_HEADER_FONT
             cell.alignment = EXPORT_HEADER_ALIGNMENT
 
+        # 엑셀은 기본 폭이 좁아서 한글/중문 remark가 잘리는 경우가 많아
+        # 실제 표시 폭 기준으로 컬럼 너비를 계산한다.
         for column_index in range(1, worksheet.max_column + 1):
             column_letter = get_column_letter(column_index)
             max_width = 0

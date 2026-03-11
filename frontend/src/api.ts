@@ -5,7 +5,6 @@ import type {
   ApiKeyMasked,
   ApiKeyUpdatePayload,
   LiteAnalyzeResponse,
-  LiteResultRow,
   LiteRunJobCreateResponse,
   LiteRunJobResponse,
 } from './types'
@@ -104,17 +103,13 @@ export async function getLiteRunJob(jobId: string) {
   return response.data
 }
 
-export async function exportLiteResult(
-  rows: LiteResultRow[],
+export async function downloadLiteRunResult(
+  jobId: string,
   fileFormat: 'csv' | 'xlsx',
 ) {
-  const response = await client.post(
-    '/lite/export-result',
-    {
-      file_format: fileFormat,
-      rows,
-    },
-    { responseType: 'blob' },
-  )
+  const response = await client.get(`/lite/jobs/${jobId}/download`, {
+    params: { file_format: fileFormat },
+    responseType: 'blob',
+  })
   return response.data as Blob
 }

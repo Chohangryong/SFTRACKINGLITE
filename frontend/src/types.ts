@@ -92,5 +92,6 @@ export interface LiteRunJobResponse {
   created_at: string
   started_at?: string | null
   finished_at?: string | null
+  expires_at?: string | null
   result?: LiteRunResponse | null
 }

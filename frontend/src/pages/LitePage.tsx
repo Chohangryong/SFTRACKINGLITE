@@ -1,12 +1,22 @@
-﻿import axios from 'axios'
+import axios from 'axios'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Button, Card, Descriptions, Progress, Space, Table, Tag, Typography, Upload, message } from 'antd'
+import { Button, Card, Descriptions, Modal, Progress, Space, Table, Tag, Typography, Upload, message } from 'antd'
 import type { UploadProps } from 'antd'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-import { analyzeLiteUpload, createLiteRunJob, exportLiteResult, getLiteRunJob } from '../api'
+import { analyzeLiteUpload, createLiteRunJob, downloadLiteRunResult, getLiteRunJob } from '../api'
 import { statusMeta } from '../lib/status'
 import type { LiteAnalyzeResponse, LiteRunJobResponse, LiteRunResponse } from '../types'
+
+const ACTIVE_JOB_STORAGE_KEY = 'sf-lite-active-job-id'
+const COMPLETED_NOTICE_STORAGE_KEY = 'sf-lite-completed-job-id'
+
+type NoticeModalState = {
+  type: 'completed' | 'expired'
+  title: string
+  content: string
+  reloadOnOk?: boolean
+}
 
 function getErrorMessage(error: unknown) {
   if (!axios.isAxiosError(error)) {
@@ -36,24 +46,113 @@ function downloadBlob(blob: Blob, filename: string) {
   window.URL.revokeObjectURL(url)
 }
 
+function getStoredJobId() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  return window.sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY)
+}
+
+function clearStoredJobState() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY)
+  window.sessionStorage.removeItem(COMPLETED_NOTICE_STORAGE_KEY)
+}
+
+function markCompletionNoticeShown(jobId: string) {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.sessionStorage.setItem(COMPLETED_NOTICE_STORAGE_KEY, jobId)
+}
+
+function isCompletionNoticeShown(jobId: string) {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  return window.sessionStorage.getItem(COMPLETED_NOTICE_STORAGE_KEY) === jobId
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return '-'
+  }
+
+  const normalizedValue =
+    /(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !value.includes('T') ? value : `${value}Z`
+  const date = new Date(normalizedValue)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  return formatter.format(date).replace(' ', ' ')
+}
+
 export function LitePage() {
   const [file, setFile] = useState<File | null>(null)
   const [analysis, setAnalysis] = useState<LiteAnalyzeResponse | null>(null)
   const [result, setResult] = useState<LiteRunResponse | null>(null)
   const [mapping, setMapping] = useState<Record<string, string | null>>({})
-  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [activeJobId, setActiveJobId] = useState<string | null>(() => getStoredJobId())
   const [handledJobId, setHandledJobId] = useState<string | null>(null)
   const [exportingFormat, setExportingFormat] = useState<'csv' | 'xlsx' | null>(null)
+  const [expiredNoticeJobId, setExpiredNoticeJobId] = useState<string | null>(null)
+  const [noticeModal, setNoticeModal] = useState<NoticeModalState | null>(null)
+
+  const resetJobState = () => {
+    setResult(null)
+    setActiveJobId(null)
+    setHandledJobId(null)
+    setExpiredNoticeJobId(null)
+    clearStoredJobState()
+  }
+
+  const showExpiredModal = () => {
+    const jobId = activeJobId ?? 'expired'
+    if (expiredNoticeJobId === jobId) {
+      return
+    }
+    setExpiredNoticeJobId(jobId)
+    setResult(null)
+    setHandledJobId(null)
+    setActiveJobId(null)
+    clearStoredJobState()
+    setNoticeModal({
+      type: 'expired',
+      title: '결과 초기화',
+      content: '조회된 결과가 초기화되었습니다. 다시 조회해 주세요.',
+      reloadOnOk: true,
+    })
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    if (activeJobId) {
+      window.sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, activeJobId)
+      return
+    }
+    window.sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY)
+  }, [activeJobId])
 
   const analyzeMutation = useMutation({
     mutationFn: (selectedFile: File) => analyzeLiteUpload(selectedFile),
     onSuccess: (data, selectedFile) => {
       setFile(selectedFile)
       setAnalysis(data)
-      setResult(null)
-      setActiveJobId(null)
-      setHandledJobId(null)
       setMapping(data.detected_mapping)
+      resetJobState()
       message.success('파일 분석이 완료되었습니다.')
     },
     onError: (error) => {
@@ -72,7 +171,11 @@ export function LitePage() {
     onSuccess: (data) => {
       setResult(null)
       setHandledJobId(null)
+      setExpiredNoticeJobId(null)
       setActiveJobId(data.job_id)
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem(COMPLETED_NOTICE_STORAGE_KEY)
+      }
       message.info('SF Express 조회를 시작했습니다.')
     },
     onError: (error) => {
@@ -91,28 +194,77 @@ export function LitePage() {
       }
       return data.status === 'queued' || data.status === 'running' ? 1000 : false
     },
+    retry: false,
   })
 
+  const currentJob = activeJobId ? jobQuery.data : undefined
+  const isRunInProgress = currentJob?.status === 'queued' || currentJob?.status === 'running'
+  const canDownload = Boolean(activeJobId && result && currentJob?.status === 'completed')
+
   useEffect(() => {
-    const job = jobQuery.data
-    if (!job || handledJobId === job.job_id) {
+    if (!jobQuery.error || !axios.isAxiosError(jobQuery.error)) {
       return
     }
+    if (jobQuery.error.response?.status === 404) {
+      resetJobState()
+    }
+  }, [jobQuery.error])
+
+  useEffect(() => {
+    // Run 버튼은 job 생성만 하므로 실제 완료/만료 반영은 polling 결과로 처리한다.
+    const job = currentJob
+    if (!job) {
+      return
+    }
+
+    if (job.status === 'expired') {
+      showExpiredModal()
+      return
+    }
+
     if (job.status === 'completed' && job.result) {
       setResult(job.result)
       setHandledJobId(job.job_id)
-      message.success('SF Express 조회가 완료되었습니다.')
+      if (!isCompletionNoticeShown(job.job_id)) {
+        markCompletionNoticeShown(job.job_id)
+        setNoticeModal({
+          type: 'completed',
+          title: '조회 완료',
+          content: '조회가 완료되었습니다. 10분간 결과를 확인하고 파일을 다운로드할 수 있습니다.',
+          reloadOnOk: false,
+        })
+      }
       return
     }
-    if (job.status === 'failed') {
+
+    if (job.status === 'failed' && handledJobId !== job.job_id) {
       setHandledJobId(job.job_id)
       message.error(job.error_message ?? 'SF Express 조회에 실패했습니다.')
     }
-  }, [handledJobId, jobQuery.data])
+  }, [activeJobId, currentJob, expiredNoticeJobId, handledJobId])
+
+  useEffect(() => {
+    const expiresAt = currentJob?.expires_at
+    if (!expiresAt || currentJob?.status !== 'completed') {
+      return
+    }
+
+    const remainingMs = new Date(expiresAt).getTime() - Date.now()
+    if (remainingMs <= 0) {
+      showExpiredModal()
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      showExpiredModal()
+    }, remainingMs)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [activeJobId, currentJob, expiredNoticeJobId])
 
   const exportMutation = useMutation({
     mutationFn: async (fileFormat: 'csv' | 'xlsx') => {
-      const blob = await exportLiteResult(result!.rows, fileFormat)
+      const blob = await downloadLiteRunResult(activeJobId!, fileFormat)
       return { blob, fileFormat }
     },
     onMutate: (fileFormat) => {
@@ -123,6 +275,10 @@ export function LitePage() {
       message.success(`${fileFormat.toUpperCase()} 파일을 다운로드했습니다.`)
     },
     onError: (error) => {
+      if (axios.isAxiosError(error) && error.response?.status === 410) {
+        showExpiredModal()
+        return
+      }
       message.error(getErrorMessage(error))
     },
     onSettled: () => {
@@ -133,14 +289,13 @@ export function LitePage() {
   const analyzeUploadProps: UploadProps = {
     maxCount: 1,
     beforeUpload: (selectedFile) => {
+      // 업로드 직후 analyze만 수행하고, 실제 브라우저 업로드는 막는다.
       analyzeMutation.mutate(selectedFile)
       return false
     },
     showUploadList: true,
   }
 
-  const currentJob = jobQuery.data
-  const isRunInProgress = currentJob?.status === 'queued' || currentJob?.status === 'running'
   const analysisSummary = analysis
     ? [
         { label: '파일명', value: analysis.file_name },
@@ -151,8 +306,44 @@ export function LitePage() {
       ]
     : []
 
+  const statusRows = useMemo(
+    () =>
+      result
+        ? Object.entries(result.summary.status_counts).map(([status, count]) => ({
+            key: status,
+            status,
+            count,
+          }))
+        : [],
+    [result],
+  )
+  const queriedAt = formatDateTime(currentJob?.finished_at)
+
   return (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
+      <Modal
+        open={Boolean(noticeModal)}
+        title={noticeModal?.title}
+        onOk={() => {
+          const reloadOnOk = Boolean(noticeModal?.reloadOnOk)
+          setNoticeModal(null)
+          if (reloadOnOk) {
+            window.location.reload()
+          }
+        }}
+        onCancel={() => {
+          const reloadOnOk = Boolean(noticeModal?.reloadOnOk)
+          setNoticeModal(null)
+          if (reloadOnOk) {
+            window.location.reload()
+          }
+        }}
+        okText="확인"
+        cancelButtonProps={{ style: { display: 'none' } }}
+      >
+        <Typography.Paragraph style={{ marginBottom: 0 }}>{noticeModal?.content}</Typography.Paragraph>
+      </Modal>
+
       <div className="page-header">
         <div>
           <Typography.Title level={1}>SF Express 송장 조회</Typography.Title>
@@ -191,14 +382,14 @@ export function LitePage() {
                 조회 요청
               </Button>
               <Button
-                disabled={!result || exportMutation.isPending || isRunInProgress}
+                disabled={!canDownload || exportMutation.isPending || isRunInProgress}
                 loading={exportMutation.isPending && exportingFormat === 'xlsx'}
                 onClick={() => exportMutation.mutate('xlsx')}
               >
                 XLSX 다운로드
               </Button>
               <Button
-                disabled={!result || exportMutation.isPending || isRunInProgress}
+                disabled={!canDownload || exportMutation.isPending || isRunInProgress}
                 loading={exportMutation.isPending && exportingFormat === 'csv'}
                 onClick={() => exportMutation.mutate('csv')}
               >
@@ -206,7 +397,7 @@ export function LitePage() {
               </Button>
             </Space>
 
-            {currentJob && currentJob.status !== 'completed' && (
+            {currentJob && currentJob.status !== 'completed' && currentJob.status !== 'expired' && (
               <div>
                 <Progress
                   percent={currentJob.progress_percent}
@@ -224,9 +415,12 @@ export function LitePage() {
 
             {result && (
               <>
-                <Typography.Title level={5} style={{ margin: 0 }}>
-                  조회 결과 요약
-                </Typography.Title>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <Typography.Title level={5} style={{ margin: 0 }}>
+                    조회 결과 요약
+                  </Typography.Title>
+                  <Typography.Text type="secondary">조회일시 {queriedAt}</Typography.Text>
+                </div>
                 <Descriptions bordered size="small" column={1} style={{ marginBottom: 16 }}>
                   <Descriptions.Item label="조회 Tracking No 건수">{result.summary.query_target_count}</Descriptions.Item>
                 </Descriptions>
@@ -238,11 +432,7 @@ export function LitePage() {
                     pagination={false}
                     size="small"
                     sticky
-                    dataSource={Object.entries(result.summary.status_counts).map(([status, count]) => ({
-                      key: status,
-                      status,
-                      count,
-                    }))}
+                    dataSource={statusRows}
                     columns={[
                       {
                         title: '상태',

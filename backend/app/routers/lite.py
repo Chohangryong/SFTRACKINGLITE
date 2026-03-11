@@ -4,7 +4,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -17,6 +17,7 @@ from app.schemas.lite import (
     LiteRunResponse,
 )
 from app.services.lite_job_store import LiteJobStore
+from app.services.lite_result_store import LiteResultExpiredError, LiteResultNotFoundError, LiteResultStore
 from app.services.lite_service import LiteService
 
 router = APIRouter(prefix="/lite", tags=["lite"])
@@ -84,6 +85,7 @@ async def create_lite_run_job(
     job_store: LiteJobStore = request.app.state.lite_job_store
     job = job_store.create(file_name=file_name)
 
+    # 조회는 오래 걸릴 수 있으므로 job만 먼저 만들고 백그라운드에서 실행한다.
     asyncio.create_task(
         _run_lite_job(
             app=request.app,
@@ -124,7 +126,38 @@ def get_lite_run_job(job_id: str, request: Request) -> LiteRunJobResponse:
         created_at=record.created_at,
         started_at=record.started_at,
         finished_at=record.finished_at,
+        expires_at=record.expires_at,
         result=record.result,
+    )
+
+
+@router.get("/jobs/{job_id}/download")
+def download_lite_run_result(
+    job_id: str,
+    file_format: str = Query(default="xlsx"),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    service = LiteService(session, settings)
+    result_store = LiteResultStore(settings)
+
+    try:
+        filename, content, content_type = result_store.export_result(
+            job_id=job_id,
+            file_format=file_format,
+            exporter=service.export_rows,
+        )
+    except LiteResultExpiredError as error:
+        raise HTTPException(status_code=410, detail=str(error)) from error
+    except LiteResultNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -194,8 +227,10 @@ async def _run_lite_job(
     language: str,
 ) -> None:
     job_store: LiteJobStore = app.state.lite_job_store
+    result_store = LiteResultStore(settings)
 
     def worker() -> None:
+        # 요청 생명주기와 분리된 백그라운드 작업이라 worker 안에서 별도 세션을 만든다.
         with app.state.database.session() as session:
             service = LiteService(session, settings)
             prepared = service.prepare_content(
@@ -213,12 +248,24 @@ async def _run_lite_job(
                 language=language,
                 progress_callback=lambda completed, total: job_store.update_progress(job_id, completed, total),
             )
-            job_store.mark_completed(job_id, result)
+            expires_at = result_store.save_result(job_id, result)
+            job_store.mark_completed(job_id, summarize_job_result(result), expires_at)
 
     try:
         await asyncio.to_thread(worker)
     except Exception as error:  # pragma: no cover - defensive background path
         job_store.mark_failed(job_id, str(error))
+
+
+def summarize_job_result(result: LiteRunResponse) -> LiteRunResponse:
+    # 화면 요약에는 rows 전체가 필요 없어서 메모리에는 빈 리스트만 남긴다.
+    return LiteRunResponse(
+        file_name=result.file_name,
+        selected_sheet=result.selected_sheet,
+        detected_mapping=result.detected_mapping,
+        summary=result.summary,
+        rows=[],
+    )
 
 
 def parse_mapping(mapping_json: str | None) -> dict[str, str | None] | None:

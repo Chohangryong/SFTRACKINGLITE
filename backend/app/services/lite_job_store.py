@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -17,6 +17,7 @@ class LiteJobRecord:
     created_at: datetime = field(default_factory=datetime.utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    expires_at: datetime | None = None
     selected_sheet: str | None = None
     total_rows: int = 0
     deduped_rows: int = 0
@@ -31,6 +32,8 @@ class LiteJobRecord:
 
 class LiteJobStore:
     def __init__(self) -> None:
+        # Lite는 결과 원본을 디스크에 임시 저장하고,
+        # 메모리에는 화면 요약에 필요한 job 상태만 남긴다.
         self._jobs: dict[str, LiteJobRecord] = {}
         self._lock = Lock()
 
@@ -58,6 +61,8 @@ class LiteJobStore:
             record.remaining_targets = prepared["query_target_count"]
             record.progress_percent = 100 if prepared["query_target_count"] == 0 else 0
             record.error_message = None
+            record.expires_at = None
+            record.result = None
 
     def update_progress(self, job_id: str, completed_targets: int, total_targets: int) -> None:
         with self._lock:
@@ -66,11 +71,12 @@ class LiteJobStore:
             record.remaining_targets = max(total_targets - completed_targets, 0)
             record.progress_percent = 100 if total_targets == 0 else int((completed_targets / total_targets) * 100)
 
-    def mark_completed(self, job_id: str, result: LiteRunResponse) -> None:
+    def mark_completed(self, job_id: str, result: LiteRunResponse, expires_at: datetime) -> None:
         with self._lock:
             record = self._jobs[job_id]
             record.status = "completed"
             record.finished_at = datetime.utcnow()
+            record.expires_at = expires_at
             record.result = result
             record.selected_sheet = result.selected_sheet
             record.total_rows = result.summary.total_rows
@@ -88,6 +94,8 @@ class LiteJobStore:
             record.status = "failed"
             record.finished_at = datetime.utcnow()
             record.error_message = error_message
+            record.expires_at = None
+            record.result = None
             if record.query_target_count and record.completed_targets < record.query_target_count:
                 record.remaining_targets = record.query_target_count - record.completed_targets
 
@@ -96,6 +104,10 @@ class LiteJobStore:
             record = self._jobs.get(job_id)
             if record is None:
                 return None
+            if self._is_expired(record):
+                record.status = "expired"
+                record.result = None
+                record.error_message = None
             return LiteJobRecord(
                 job_id=record.job_id,
                 file_name=record.file_name,
@@ -103,6 +115,7 @@ class LiteJobStore:
                 created_at=record.created_at,
                 started_at=record.started_at,
                 finished_at=record.finished_at,
+                expires_at=record.expires_at,
                 selected_sheet=record.selected_sheet,
                 total_rows=record.total_rows,
                 deduped_rows=record.deduped_rows,
@@ -114,3 +127,10 @@ class LiteJobStore:
                 error_message=record.error_message,
                 result=record.result,
             )
+
+    def _is_expired(self, record: LiteJobRecord) -> bool:
+        return (
+            record.status == "completed"
+            and record.expires_at is not None
+            and record.expires_at <= datetime.now(UTC)
+        )

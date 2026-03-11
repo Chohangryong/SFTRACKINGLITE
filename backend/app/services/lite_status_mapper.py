@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Lite status mapping based on the 2,708-waybill production analysis.
+"""2708건 실데이터 분석 결과를 기준으로 만든 Lite 전용 상태 매퍼.
 
-Reference outputs:
-- data/analysis/sf_mapping_20260310T020009Z/final_mapping_recommendations.md
-- data/analysis/sf_mapping_20260310T020009Z/no_route_analysis.md
+핵심 원칙:
+- 조회 불가와 조회 실패를 분리한다.
+- 실제로 의미가 확정된 조합만 EXCEPTION으로 둔다.
+- 아직 정의하지 못한 조합은 UNKNOWN으로 남겨 후속 분석 대상으로 돌린다.
 """
 
 from dataclasses import dataclass
@@ -105,6 +106,7 @@ def map_route_response(route_resp: dict[str, Any] | None) -> LiteStatusResult:
     remark = event_remark(latest_event)
     event_time = event_datetime(latest_event)
 
+    # 80/401은 동일 코드 안에 도착과 수취완료가 섞여 있어서 문구까지 같이 봐야 한다.
     if combo == ("80", "4", "401"):
         if contains_any(remark, ARRIVED_REMARK_TERMS):
             status = "ARRIVED"
@@ -134,6 +136,8 @@ def map_route_response(route_resp: dict[str, Any] | None) -> LiteStatusResult:
         status = "SHIPPED" if contains_any(remark, TRANSFER_REQUEST_REMARK_TERMS) else "UNKNOWN"
         return LiteStatusResult(status, sf_code, remark, event_time, latest_event)
 
+    # 여기까지 매핑되지 않은 최신 이벤트는 일단 UNKNOWN으로 남기고,
+    # 다운로드 시 UNKNOWN_LOG 시트에서 원문을 다시 분석한다.
     return LiteStatusResult("UNKNOWN", sf_code, remark, event_time, latest_event)
 
 

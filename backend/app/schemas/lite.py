@@ -78,4 +78,5 @@ class LiteRunJobResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    expires_at: datetime | None = None
     result: LiteRunResponse | None = None
