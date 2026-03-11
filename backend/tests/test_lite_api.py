@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -220,13 +221,203 @@ def test_lite_export_uses_customer_headers(client, mocker) -> None:
     secondary_sheet = workbook["OTHER_STATUS"]
     headers = [cell.value for cell in primary_sheet[1]]
     assert headers == [
-        "ORDER NUMBER",
-        "TRACKING NO",
-        "STATUS",
-        "SF EXPRESS CODE",
-        "SF EXPRESS REMARK",
+        "쇼핑몰오더번호",
+        "송장번호",
+        "송장상태",
+        "택배사최신상태코드",
+        "택배사최신REMARK",
     ]
+    assert primary_sheet["A1"].font.bold is True
+    assert primary_sheet["A1"].fill.fill_type == "solid"
+    assert secondary_sheet["A1"].font.bold is True
+    assert secondary_sheet["A1"].fill.fill_type == "solid"
+    assert primary_sheet.column_dimensions["E"].width > len("택배사최신REMARK")
     assert primary_sheet["A2"].value == "ORDER-1"
     assert primary_sheet["C2"].value == "ARRIVED"
     assert secondary_sheet["A2"].value == "ORDER-2"
     assert secondary_sheet["C2"].value == "SHIPPED"
+
+
+def test_lite_export_localizes_query_unavailable_status(client, mocker) -> None:
+    client.post(
+        "/api/settings/api-keys",
+        json={
+            "label": "Production",
+            "environment": "production",
+            "partner_id": "PARTNER",
+            "checkword": "CHECKWORD",
+            "is_active": True,
+        },
+    )
+    mocker.patch(
+        "app.services.sf_client.SFClient.search_routes",
+        return_value={
+            "apiResultCode": "A1000",
+            "apiResultData": json.dumps(
+                {
+                    "errorCode": "S0000",
+                    "routeResps": [
+                        {
+                            "mailNo": "SFUNAVAILABLE",
+                            "routes": [],
+                            "reasonCode": "20028",
+                            "reasonRemark": "\u6708\u7ed3\u5361\u53f7\u4e0d\u5339\u914d",
+                        }
+                    ],
+                }
+            ),
+        },
+    )
+
+    response = client.post(
+        "/api/lite/export",
+        data={"file_format": "xlsx"},
+        files={
+            "file": (
+                "orders.csv",
+                "Order Number,Tracking Number\nORDER-1,SFUNAVAILABLE\n".encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content))
+    secondary_sheet = workbook["OTHER_STATUS"]
+    assert secondary_sheet["C2"].value == "\uC870\uD68C\uBD88\uAC00"
+
+
+def test_lite_run_marks_partial_batch_missing_as_query_failed(client, mocker) -> None:
+    client.post(
+        "/api/settings/api-keys",
+        json={
+            "label": "Production",
+            "environment": "production",
+            "partner_id": "PARTNER",
+            "checkword": "CHECKWORD",
+            "is_active": True,
+        },
+    )
+
+    mocker.patch(
+        "app.services.sf_client.SFClient.search_routes",
+        return_value={
+            "apiResultCode": "A1000",
+            "apiResultData": json.dumps(
+                {
+                    "errorCode": "S0000",
+                    "routeResps": [
+                        {
+                            "mailNo": "SFOK",
+                            "routes": [
+                                {
+                                    "acceptTime": "2026-03-10 10:00:00",
+                                    "opCode": "634",
+                                    "firstStatusCode": "3",
+                                    "secondaryStatusCode": "301",
+                                    "remark": "\u5feb\u4ef6\u6b63\u5728\u6d3e\u9001\u9014\u4e2d",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+        },
+    )
+
+    response = client.post(
+        "/api/lite/run",
+        files={
+            "file": (
+                "orders.csv",
+                "Order Number,Tracking Number\nORDER-1,SFOK\nORDER-2,SFMISSING\n".encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    rows = {row["order_number"]: row for row in response.json()["rows"]}
+    assert rows["ORDER-1"]["status"] == "SHIPPED"
+    assert rows["ORDER-2"]["status"] == "QUERY_FAILED"
+    assert rows["ORDER-2"]["sf_express_code"] == "SF_PARTIAL_MISSING"
+    assert "SFMISSING" in rows["ORDER-2"]["sf_express_remark"]
+
+
+def test_lite_job_progress_is_monotonic_under_parallel_batches(client, mocker) -> None:
+    client.post(
+        "/api/settings/api-keys",
+        json={
+            "label": "Production",
+            "environment": "production",
+            "partner_id": "PARTNER",
+            "checkword": "CHECKWORD",
+            "is_active": True,
+        },
+    )
+
+    def mocked_search_routes(_self, tracking_numbers, language=None):
+        time.sleep(0.05)
+        return {
+            "apiResultCode": "A1000",
+            "apiResultData": json.dumps(
+                {
+                    "errorCode": "S0000",
+                    "routeResps": [
+                        {
+                            "mailNo": tracking_number,
+                            "routes": [
+                                {
+                                    "acceptTime": "2026-03-10 10:00:00",
+                                    "opCode": "634",
+                                    "firstStatusCode": "3",
+                                    "secondaryStatusCode": "301",
+                                    "remark": "\u5feb\u4ef6\u6b63\u5728\u6d3e\u9001\u9014\u4e2d",
+                                }
+                            ],
+                        }
+                        for tracking_number in tracking_numbers
+                    ],
+                }
+            ),
+        }
+
+    mocker.patch("app.services.sf_client.SFClient.search_routes", autospec=True, side_effect=mocked_search_routes)
+
+    csv_rows = ["Order Number,Tracking Number"]
+    for index in range(1, 22):
+        csv_rows.append(f"ORDER-{index},SF{index:03d}")
+
+    create_response = client.post(
+        "/api/lite/jobs",
+        files={
+            "file": (
+                "orders.csv",
+                ("\n".join(csv_rows) + "\n").encode("utf-8"),
+                "text/csv",
+            )
+        },
+    )
+
+    assert create_response.status_code == 200
+    job_id = create_response.json()["job_id"]
+
+    progress_values: list[int] = []
+    completed_values: list[int] = []
+    status = "queued"
+    for _ in range(30):
+        poll_response = client.get(f"/api/lite/jobs/{job_id}")
+        assert poll_response.status_code == 200
+        payload = poll_response.json()
+        progress_values.append(payload["progress_percent"])
+        completed_values.append(payload["completed_targets"])
+        status = payload["status"]
+        if status == "completed":
+            break
+        time.sleep(0.03)
+
+    assert status == "completed"
+    assert progress_values == sorted(progress_values)
+    assert completed_values == sorted(completed_values)
+    assert completed_values[-1] == 21
+    assert progress_values[-1] == 100

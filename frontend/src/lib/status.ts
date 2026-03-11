@@ -5,6 +5,7 @@ export const statusPalette: Record<string, { label: string; color: string }> = {
   SHIPPED: { label: 'Shipped', color: 'processing' },
   ARRIVED: { label: 'Arrived', color: 'gold' },
   COLLECTED: { label: 'Collected', color: 'green' },
+  CANCELED: { label: 'Canceled', color: 'red' },
   IN_TRANSIT: { label: 'In Transit', color: 'processing' },
   OUT_FOR_DELIVERY: { label: 'Out For Delivery', color: 'gold' },
   DELIVERED: { label: 'Delivered', color: 'green' },

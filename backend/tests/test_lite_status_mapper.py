@@ -76,7 +76,7 @@ def test_map_route_response_covers_arrived_shipped_and_exception_rules() -> None
             ]
         }
     )
-    exception = map_route_response(
+    canceled = map_route_response(
         {
             "routes": [
                 {
@@ -89,7 +89,21 @@ def test_map_route_response_covers_arrived_shipped_and_exception_rules() -> None
             ]
         }
     )
+    exception = map_route_response(
+        {
+            "routes": [
+                {
+                    "acceptTime": "2026-03-10 13:30:00",
+                    "opCode": "126",
+                    "firstStatusCode": "11",
+                    "secondaryStatusCode": "1101",
+                    "remark": "\u53d6\u4ef6\u7801\u5df2\u5931\u6548",
+                }
+            ]
+        }
+    )
 
     assert arrived.status == "ARRIVED"
     assert shipped.status == "SHIPPED"
+    assert canceled.status == "CANCELED"
     assert exception.status == "EXCEPTION"

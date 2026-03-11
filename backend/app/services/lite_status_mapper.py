@@ -36,8 +36,10 @@ ARRIVED_COMBOS = {
     ("218", "11", "1101"),
     ("642", "11", "1101"),
 }
-EXCEPTION_COMBOS = {
+CANCELED_COMBOS = {
     ("33", "5", "501"),
+}
+EXCEPTION_COMBOS = {
     ("126", "11", "1101"),
 }
 SHIPPED_COMBOS = {
@@ -114,6 +116,9 @@ def map_route_response(route_resp: dict[str, Any] | None) -> LiteStatusResult:
 
     if combo in ARRIVED_COMBOS:
         return LiteStatusResult("ARRIVED", sf_code, remark, event_time, latest_event)
+
+    if combo in CANCELED_COMBOS:
+        return LiteStatusResult("CANCELED", sf_code, remark, event_time, latest_event)
 
     if combo in EXCEPTION_COMBOS:
         return LiteStatusResult("EXCEPTION", sf_code, remark, event_time, latest_event)

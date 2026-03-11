@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
     default_language: str = "zh-CN"
     request_timeout_seconds: int = 30
+    lite_fetch_concurrency: int = 2
     upload_preview_rows: int = 100
     upload_max_size_mb: int = 20
     frontend_origin: str = "http://127.0.0.1:5173"

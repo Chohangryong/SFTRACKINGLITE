@@ -3,13 +3,17 @@ from __future__ import annotations
 import csv
 import time
 from collections import Counter
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from io import BytesIO, StringIO
 from typing import Any, Callable
+import unicodedata
 
 import pandas as pd
 from fastapi import UploadFile
 from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -18,6 +22,10 @@ from app.services.lite_status_mapper import LiteStatusResult, map_route_response
 from app.services.settings_service import SettingsService
 from app.services.sf_client import SFClient, SFClientCredentials, SFClientError
 from app.utils.excel_safe import escape_excel_formula
+
+MAX_LITE_FETCH_CONCURRENCY = 3
+PARTIAL_MISSING_CODE = "SF_PARTIAL_MISSING"
+PARTIAL_MISSING_REMARK = "SF batch response missing tracking number"
 
 FIELD_ALIASES: dict[str, list[str]] = {
     "order_number": [
@@ -42,12 +50,20 @@ FIELD_ALIASES: dict[str, list[str]] = {
 }
 
 EXPORT_COLUMNS = [
-    ("ORDER NUMBER", "order_number"),
-    ("TRACKING NO", "tracking_number"),
-    ("STATUS", "status"),
-    ("SF EXPRESS CODE", "sf_express_code"),
-    ("SF EXPRESS REMARK", "sf_express_remark"),
+    ("쇼핑몰오더번호", "order_number"),
+    ("송장번호", "tracking_number"),
+    ("송장상태", "status"),
+    ("택배사최신상태코드", "sf_express_code"),
+    ("택배사최신REMARK", "sf_express_remark"),
 ]
+
+EXPORT_STATUS_LABELS = {
+    "QUERY_UNAVAILABLE": "조회불가",
+}
+
+EXPORT_HEADER_FILL = PatternFill(fill_type="solid", fgColor="D9E2F3")
+EXPORT_HEADER_FONT = Font(bold=True)
+EXPORT_HEADER_ALIGNMENT = Alignment(horizontal="center", vertical="center")
 
 
 @dataclass
@@ -385,13 +401,10 @@ class LiteService:
             raise ValueError("No active SF API key configured")
 
         api_key_record, secret_fields = active_api_key
-        client = SFClient(
-            self.settings,
-            SFClientCredentials(
-                partner_id=secret_fields["partner_id"],
-                checkword=secret_fields["checkword"],
-                environment=api_key_record.environment,
-            ),
+        credentials = SFClientCredentials(
+            partner_id=secret_fields["partner_id"],
+            checkword=secret_fields["checkword"],
+            environment=api_key_record.environment,
         )
 
         total_targets = len(tracking_numbers)
@@ -400,43 +413,82 @@ class LiteService:
             progress_callback(completed_targets, total_targets)
 
         route_map: dict[str, LiteStatusResult] = {}
-        for start in range(0, len(tracking_numbers), batch_size):
-            batch = tracking_numbers[start : start + batch_size]
-            try:
-                response = client.search_routes(batch, language=language)
-                route_resps, _ = client.extract_route_payload(response)
-                batch_map = {
-                    str(item.get("mailNo") or item.get("trackingNumber") or "").strip(): item
-                    for item in route_resps
-                }
-                for tracking_number in batch:
-                    route_map[tracking_number] = map_route_response(batch_map.get(tracking_number))
-            except SFClientError as error:
-                for tracking_number in batch:
-                    route_map[tracking_number] = LiteStatusResult(
-                        status="QUERY_FAILED",
-                        sf_express_code="SF_CLIENT_ERROR",
-                        sf_express_remark=str(error),
-                        last_event_time=None,
-                        latest_event=None,
-                    )
-            except Exception as error:  # pragma: no cover - defensive local workflow
-                for tracking_number in batch:
-                    route_map[tracking_number] = LiteStatusResult(
-                        status="QUERY_FAILED",
-                        sf_express_code="UNEXPECTED_ERROR",
-                        sf_express_remark=str(error),
-                        last_event_time=None,
-                        latest_event=None,
-                    )
+        concurrency = max(1, min(self.settings.lite_fetch_concurrency, MAX_LITE_FETCH_CONCURRENCY))
+        batches = [tracking_numbers[start : start + batch_size] for start in range(0, len(tracking_numbers), batch_size)]
 
-            completed_targets += len(batch)
-            if progress_callback:
-                progress_callback(completed_targets, total_targets)
+        with SFClient.create_http_client(self.settings) as http_client:
+            client = SFClient(
+                self.settings,
+                credentials,
+                http_client=http_client,
+            )
 
-            if start + batch_size < len(tracking_numbers) and delay_seconds > 0:
-                time.sleep(delay_seconds)
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures: dict[Future[dict[str, LiteStatusResult]], list[str]] = {}
+                for index, batch in enumerate(batches):
+                    futures[executor.submit(self._fetch_route_batch, client, batch, language)] = batch
+                    if delay_seconds > 0 and index + 1 < len(batches):
+                        time.sleep(delay_seconds)
+
+                for future in as_completed(futures):
+                    batch = futures[future]
+                    batch_result = future.result()
+                    route_map.update(batch_result)
+                    completed_targets += len(batch)
+                    if progress_callback:
+                        progress_callback(completed_targets, total_targets)
         return route_map
+
+    def _fetch_route_batch(
+        self,
+        client: SFClient,
+        batch: list[str],
+        language: str,
+    ) -> dict[str, LiteStatusResult]:
+        try:
+            response = client.search_routes(batch, language=language)
+            route_resps, _ = client.extract_route_payload(response)
+            batch_map = {
+                str(item.get("mailNo") or item.get("trackingNumber") or "").strip(): item
+                for item in route_resps
+                if str(item.get("mailNo") or item.get("trackingNumber") or "").strip()
+            }
+            results: dict[str, LiteStatusResult] = {}
+            for tracking_number in batch:
+                route_resp = batch_map.get(tracking_number)
+                if route_resp is None:
+                    results[tracking_number] = LiteStatusResult(
+                        status="QUERY_FAILED",
+                        sf_express_code=PARTIAL_MISSING_CODE,
+                        sf_express_remark=f"{PARTIAL_MISSING_REMARK}: {tracking_number}",
+                        last_event_time=None,
+                        latest_event=None,
+                    )
+                    continue
+                results[tracking_number] = map_route_response(route_resp)
+            return results
+        except SFClientError as error:
+            return {
+                tracking_number: LiteStatusResult(
+                    status="QUERY_FAILED",
+                    sf_express_code="SF_CLIENT_ERROR",
+                    sf_express_remark=str(error),
+                    last_event_time=None,
+                    latest_event=None,
+                )
+                for tracking_number in batch
+            }
+        except Exception as error:  # pragma: no cover - defensive local workflow
+            return {
+                tracking_number: LiteStatusResult(
+                    status="QUERY_FAILED",
+                    sf_express_code="UNEXPECTED_ERROR",
+                    sf_express_remark=str(error),
+                    last_event_time=None,
+                    latest_event=None,
+                )
+                for tracking_number in batch
+            }
 
     def _export_xlsx(self, rows: list[dict[str, Any]]) -> tuple[str, bytes, str]:
         workbook = Workbook()
@@ -463,13 +515,52 @@ class LiteService:
         writer = csv.DictWriter(buffer, fieldnames=[header for header, _ in EXPORT_COLUMNS])
         writer.writeheader()
         for row in rows:
-            writer.writerow({header: escape_excel_formula(row.get(field)) for header, field in EXPORT_COLUMNS})
+            writer.writerow(
+                {
+                    header: escape_excel_formula(self._export_value(field, row.get(field)))
+                    for header, field in EXPORT_COLUMNS
+                }
+            )
         return ("lite-tracking-results.csv", buffer.getvalue().encode("utf-8-sig"), "text/csv")
 
     def _append_export_rows(self, worksheet: Any, rows: list[dict[str, Any]]) -> None:
         worksheet.append([header for header, _ in EXPORT_COLUMNS])
         for row in rows:
-            worksheet.append([escape_excel_formula(row.get(field)) for _, field in EXPORT_COLUMNS])
+            worksheet.append(
+                [escape_excel_formula(self._export_value(field, row.get(field))) for _, field in EXPORT_COLUMNS]
+            )
+        self._style_export_sheet(worksheet)
+
+    def _export_value(self, field: str, value: Any) -> Any:
+        if field == "status":
+            return EXPORT_STATUS_LABELS.get(str(value), value)
+        return value
+
+    def _style_export_sheet(self, worksheet: Any) -> None:
+        for cell in worksheet[1]:
+            cell.fill = EXPORT_HEADER_FILL
+            cell.font = EXPORT_HEADER_FONT
+            cell.alignment = EXPORT_HEADER_ALIGNMENT
+
+        for column_index in range(1, worksheet.max_column + 1):
+            column_letter = get_column_letter(column_index)
+            max_width = 0
+            for row_index in range(1, worksheet.max_row + 1):
+                value = worksheet.cell(row=row_index, column=column_index).value
+                display_width = self._display_text_width(value)
+                if display_width > max_width:
+                    max_width = display_width
+            worksheet.column_dimensions[column_letter].width = max(12, max_width + 2)
+
+    def _display_text_width(self, value: Any) -> int:
+        if value is None:
+            return 0
+
+        text = str(value)
+        width = 0
+        for character in text:
+            width += 2 if unicodedata.east_asian_width(character) in {"F", "W", "A"} else 1
+        return width
 
     def _normalize(self, value: str) -> str:
         return "".join(character.lower() for character in value if character.isalnum())

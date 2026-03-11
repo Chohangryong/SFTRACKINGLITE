@@ -1,6 +1,6 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Button, Card, Descriptions, Progress, Select, Space, Table, Tag, Typography, Upload, message } from 'antd'
+import { Button, Card, Descriptions, Progress, Space, Table, Tag, Typography, Upload, message } from 'antd'
 import type { UploadProps } from 'antd'
 import { useEffect, useState } from 'react'
 
@@ -8,14 +8,9 @@ import { analyzeLiteUpload, createLiteRunJob, exportLiteResult, getLiteRunJob } 
 import { statusMeta } from '../lib/status'
 import type { LiteAnalyzeResponse, LiteRunJobResponse, LiteRunResponse } from '../types'
 
-const mappingFields = [
-  { key: 'order_number', label: 'Order Number' },
-  { key: 'tracking_number', label: 'Tracking Number' },
-] as const
-
 function getErrorMessage(error: unknown) {
   if (!axios.isAxiosError(error)) {
-    return 'Request failed.'
+    return '요청에 실패했습니다.'
   }
 
   const detail = error.response?.data?.detail
@@ -27,7 +22,7 @@ function getErrorMessage(error: unknown) {
       .map((item) => `${item.loc?.join('.') ?? 'request'}: ${item.msg}`)
       .join('\n')
   }
-  return error.message || 'Request failed.'
+  return error.message || '요청에 실패했습니다.'
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -59,7 +54,7 @@ export function LitePage() {
       setActiveJobId(null)
       setHandledJobId(null)
       setMapping(data.detected_mapping)
-      message.success('File analyzed.')
+      message.success('파일 분석이 완료되었습니다.')
     },
     onError: (error) => {
       message.error(getErrorMessage(error))
@@ -78,7 +73,7 @@ export function LitePage() {
       setResult(null)
       setHandledJobId(null)
       setActiveJobId(data.job_id)
-      message.info('Lite tracking started.')
+      message.info('SF Express 조회를 시작했습니다.')
     },
     onError: (error) => {
       message.error(getErrorMessage(error))
@@ -106,12 +101,12 @@ export function LitePage() {
     if (job.status === 'completed' && job.result) {
       setResult(job.result)
       setHandledJobId(job.job_id)
-      message.success('Lite tracking completed.')
+      message.success('SF Express 조회가 완료되었습니다.')
       return
     }
     if (job.status === 'failed') {
       setHandledJobId(job.job_id)
-      message.error(job.error_message ?? 'Lite tracking failed.')
+      message.error(job.error_message ?? 'SF Express 조회에 실패했습니다.')
     }
   }, [handledJobId, jobQuery.data])
 
@@ -125,7 +120,7 @@ export function LitePage() {
     },
     onSuccess: ({ blob, fileFormat }) => {
       downloadBlob(blob, `lite-tracking-results.${fileFormat}`)
-      message.success(`Downloaded ${fileFormat.toUpperCase()} file.`)
+      message.success(`${fileFormat.toUpperCase()} 파일을 다운로드했습니다.`)
     },
     onError: (error) => {
       message.error(getErrorMessage(error))
@@ -146,61 +141,46 @@ export function LitePage() {
 
   const currentJob = jobQuery.data
   const isRunInProgress = currentJob?.status === 'queued' || currentJob?.status === 'running'
+  const analysisSummary = analysis
+    ? [
+        { label: '파일명', value: analysis.file_name },
+        { label: '엑셀전체 ROW 수', value: analysis.total_rows },
+        { label: '중복 ROW 제거 수', value: analysis.duplicate_pairs_removed },
+        { label: '송장번호 없음', value: analysis.no_tracking_rows },
+        { label: '총 조회대상 건수', value: analysis.query_target_count },
+      ]
+    : []
 
   return (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
       <div className="page-header">
         <div>
-          <Typography.Title level={1}>Lite Tracking</Typography.Title>
+          <Typography.Title level={1}>SF Express 송장 조회</Typography.Title>
           <Typography.Paragraph>
-            Upload one customer file, dedupe by order and tracking, query SF in batches of 10, and return the
-            latest mapped status using the 2,708-waybill analysis rules.
+            쇼핑몰 주문 엑셀을 업로드해 송장번호 기준으로 SF Express 배송 상태를 조회합니다.
           </Typography.Paragraph>
         </div>
       </div>
 
       <div className="upload-grid">
-        <Card className="glass-card" title="1. Analyze File">
+        <Card className="glass-card" title="1. 오더 정보 엑셀 업로드">
           <Upload.Dragger {...analyzeUploadProps}>
-            <p>Drop a CSV/XLSX/XLS file here or click to analyze it.</p>
-            <p>The Lite flow only needs Order Number and Tracking Number.</p>
+            <p>CSV/XLSX/XLS 파일을 여기에 끌어놓거나 클릭해서 업로드하세요.</p>
           </Upload.Dragger>
 
           {analysis && (
             <Descriptions bordered size="small" column={1} style={{ marginTop: 16 }}>
-              <Descriptions.Item label="파일명">{analysis.file_name}</Descriptions.Item>
-              <Descriptions.Item label="시트명">{analysis.selected_sheet ?? 'CSV'}</Descriptions.Item>
-              <Descriptions.Item label="전체 ROW 수">{analysis.total_rows}</Descriptions.Item>
-              <Descriptions.Item label="중복 제거 후 ROW 수">{analysis.deduped_rows}</Descriptions.Item>
-              <Descriptions.Item label="조회대상 수">{analysis.query_target_count}</Descriptions.Item>
-              <Descriptions.Item label="Tracking No 없음">{analysis.no_tracking_rows}</Descriptions.Item>
+              {analysisSummary.map((item) => (
+                <Descriptions.Item key={item.label} label={item.label}>
+                  {item.value}
+                </Descriptions.Item>
+              ))}
             </Descriptions>
           )}
         </Card>
 
-        <Card className="glass-card" title="2. Mapping And Run">
+        <Card className="glass-card" title="2. SF Express 조회">
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            {mappingFields.map((field) => (
-              <div key={field.key}>
-                <Typography.Text strong>{field.label}</Typography.Text>
-                <Select
-                  allowClear
-                  style={{ width: '100%', marginTop: 8 }}
-                  value={mapping[field.key] ?? undefined}
-                  options={(analysis?.columns ?? []).map((column) => ({
-                    label: column,
-                    value: column,
-                  }))}
-                  onChange={(value) => {
-                    setMapping((current) => ({ ...current, [field.key]: value ?? null }))
-                    setResult(null)
-                    setActiveJobId(null)
-                    setHandledJobId(null)
-                  }}
-                />
-              </div>
-            ))}
-
             <Space wrap>
               <Button
                 type="primary"
@@ -208,33 +188,36 @@ export function LitePage() {
                 loading={runMutation.isPending}
                 onClick={() => runMutation.mutate()}
               >
-                Run Lite Tracking
+                조회 요청
               </Button>
               <Button
                 disabled={!result || exportMutation.isPending || isRunInProgress}
                 loading={exportMutation.isPending && exportingFormat === 'xlsx'}
                 onClick={() => exportMutation.mutate('xlsx')}
               >
-                Download XLSX
+                XLSX 다운로드
               </Button>
               <Button
                 disabled={!result || exportMutation.isPending || isRunInProgress}
                 loading={exportMutation.isPending && exportingFormat === 'csv'}
                 onClick={() => exportMutation.mutate('csv')}
               >
-                Download CSV
+                CSV 다운로드
               </Button>
             </Space>
 
             {currentJob && currentJob.status !== 'completed' && (
               <div>
-                <Progress percent={currentJob.progress_percent} status={currentJob.status === 'failed' ? 'exception' : undefined} />
+                <Progress
+                  percent={currentJob.progress_percent}
+                  status={currentJob.status === 'failed' ? 'exception' : undefined}
+                />
                 <Typography.Text type="secondary">
                   {currentJob.status === 'queued'
                     ? '조회 준비 중'
                     : currentJob.status === 'failed'
                       ? currentJob.error_message ?? '조회 실패'
-                      : `요청됨 ${currentJob.completed_targets}/${currentJob.query_target_count} · 남음 ${currentJob.remaining_targets}`}
+                      : `요청됨 ${currentJob.completed_targets}/${currentJob.query_target_count}건, 남음 ${currentJob.remaining_targets}건`}
                 </Typography.Text>
               </div>
             )}

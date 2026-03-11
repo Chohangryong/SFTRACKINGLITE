@@ -1,4 +1,4 @@
-import { RocketOutlined, SettingOutlined } from '@ant-design/icons'
+﻿import { RocketOutlined, SettingOutlined } from '@ant-design/icons'
 import { Layout, Menu, Typography } from 'antd'
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
@@ -23,10 +23,10 @@ export function LayoutShell({ children }: { children: ReactNode }) {
         <div style={{ padding: '32px 24px 16px', color: 'white' }}>
           <Typography.Text style={{ color: '#8fd8f1', letterSpacing: 2 }}>SF EXPRESS</Typography.Text>
           <Typography.Title level={3} style={{ color: 'white', margin: '8px 0 0' }}>
-            Lite Tracking
+            SF Express 송장 조회
           </Typography.Title>
           <Typography.Paragraph style={{ color: 'rgba(255,255,255,0.72)', marginTop: 12 }}>
-            Upload one file, run SF tracking, and download the latest status summary.
+            오더 파일을 업로드하고 SF Express 최신 배송 상태를 조회한 뒤 바로 다운로드합니다.
           </Typography.Paragraph>
         </div>
         <Menu
@@ -35,8 +35,8 @@ export function LayoutShell({ children }: { children: ReactNode }) {
           selectedKeys={[selectedKey]}
           style={{ background: 'transparent', borderInlineEnd: 0 }}
           items={[
-            { key: '/lite', icon: <RocketOutlined />, label: <Link to="/lite">Lite Tracking</Link> },
-            { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">Settings</Link> },
+            { key: '/lite', icon: <RocketOutlined />, label: <Link to="/lite">SF Express 송장 조회</Link> },
+            { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">설정</Link> },
           ]}
         />
       </Sider>

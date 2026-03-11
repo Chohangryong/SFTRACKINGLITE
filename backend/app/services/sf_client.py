@@ -38,9 +38,22 @@ def build_ssl_verify() -> ssl.SSLContext | bool:
 
 
 class SFClient:
-    def __init__(self, settings: Settings, credentials: SFClientCredentials) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        credentials: SFClientCredentials,
+        http_client: httpx.Client | None = None,
+    ) -> None:
         self.settings = settings
         self.credentials = credentials
+        self.http_client = http_client
+
+    @staticmethod
+    def create_http_client(settings: Settings) -> httpx.Client:
+        return httpx.Client(
+            timeout=settings.request_timeout_seconds,
+            verify=build_ssl_verify(),
+        )
 
     def call(self, service_code: str, msg_data: dict[str, Any]) -> dict[str, Any]:
         timestamp = str(int(time.time()))
@@ -54,10 +67,12 @@ class SFClient:
             "msgData": msg_data_str,
         }
         endpoint = SF_ENDPOINTS[self.credentials.environment]
-        with httpx.Client(
-            timeout=self.settings.request_timeout_seconds,
-            verify=build_ssl_verify(),
-        ) as client:
+        if self.http_client is not None:
+            response = self.http_client.post(endpoint, data=payload)
+            response.raise_for_status()
+            return response.json()
+
+        with self.create_http_client(self.settings) as client:
             response = client.post(endpoint, data=payload)
             response.raise_for_status()
             return response.json()
