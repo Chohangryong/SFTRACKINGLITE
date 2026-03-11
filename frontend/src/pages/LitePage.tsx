@@ -5,14 +5,16 @@ import type { UploadProps } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 
 import { analyzeLiteUpload, createLiteRunJob, downloadLiteRunResult, getLiteRunJob } from '../api'
+import { APP_VERSION } from '../appVersion'
 import { statusMeta } from '../lib/status'
 import type { LiteAnalyzeResponse, LiteRunJobResponse, LiteRunResponse } from '../types'
 
 const ACTIVE_JOB_STORAGE_KEY = 'sf-lite-active-job-id'
 const COMPLETED_NOTICE_STORAGE_KEY = 'sf-lite-completed-job-id'
+const ONBOARDING_NOTICE_STORAGE_KEY = `sf-lite-onboarding-seen-${APP_VERSION}`
 
 type NoticeModalState = {
-  type: 'completed' | 'expired'
+  type: 'completed' | 'expired' | 'onboarding'
   title: string
   content: string
   reloadOnOk?: boolean
@@ -146,6 +148,23 @@ export function LitePage() {
     window.sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY)
   }, [activeJobId])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    if (window.localStorage.getItem(ONBOARDING_NOTICE_STORAGE_KEY)) {
+      return
+    }
+    window.localStorage.setItem(ONBOARDING_NOTICE_STORAGE_KEY, '1')
+    setNoticeModal({
+      type: 'onboarding',
+      title: '처음 시작 안내',
+      content:
+        '1. 설정에서 SF Express API KEY를 먼저 등록해 주세요.\n2. 쇼핑몰 오더 엑셀파일을 업로드한 뒤 조회 요청을 눌러 주세요.\n3. 조회 결과는 10분간 유지되며 XLSX/CSV로 다운로드할 수 있습니다.',
+      reloadOnOk: false,
+    })
+  }, [])
+
   const analyzeMutation = useMutation({
     mutationFn: (selectedFile: File) => analyzeLiteUpload(selectedFile),
     onSuccess: (data, selectedFile) => {
@@ -211,7 +230,6 @@ export function LitePage() {
   }, [jobQuery.error])
 
   useEffect(() => {
-    // Run 버튼은 job 생성만 하므로 실제 완료/만료 반영은 polling 결과로 처리한다.
     const job = currentJob
     if (!job) {
       return
@@ -289,7 +307,6 @@ export function LitePage() {
   const analyzeUploadProps: UploadProps = {
     maxCount: 1,
     beforeUpload: (selectedFile) => {
-      // 업로드 직후 analyze만 수행하고, 실제 브라우저 업로드는 막는다.
       analyzeMutation.mutate(selectedFile)
       return false
     },
@@ -341,7 +358,9 @@ export function LitePage() {
         okText="확인"
         cancelButtonProps={{ style: { display: 'none' } }}
       >
-        <Typography.Paragraph style={{ marginBottom: 0 }}>{noticeModal?.content}</Typography.Paragraph>
+        <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-line' }}>
+          {noticeModal?.content}
+        </Typography.Paragraph>
       </Modal>
 
       <div className="page-header">

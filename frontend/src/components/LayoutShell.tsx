@@ -3,6 +3,8 @@ import { Layout, Menu, Typography } from 'antd'
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
+import { APP_VERSION } from '../appVersion'
+
 const { Header, Sider, Content } = Layout
 
 export function LayoutShell({ children }: { children: ReactNode }) {
@@ -16,6 +18,8 @@ export function LayoutShell({ children }: { children: ReactNode }) {
         breakpoint="lg"
         collapsedWidth="0"
         style={{
+          display: 'flex',
+          flexDirection: 'column',
           background: 'rgba(13, 35, 48, 0.92)',
           borderRight: '1px solid rgba(255,255,255,0.08)',
         }}
@@ -33,12 +37,17 @@ export function LayoutShell({ children }: { children: ReactNode }) {
           theme="dark"
           mode="inline"
           selectedKeys={[selectedKey]}
-          style={{ background: 'transparent', borderInlineEnd: 0 }}
+          style={{ background: 'transparent', borderInlineEnd: 0, flex: 1 }}
           items={[
             { key: '/lite', icon: <RocketOutlined />, label: <Link to="/lite">SF Express 송장 조회</Link> },
             { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">설정</Link> },
           ]}
         />
+        <div style={{ padding: '16px 24px 24px' }}>
+          <Typography.Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 12 }}>
+            버전 v{APP_VERSION}
+          </Typography.Text>
+        </div>
       </Sider>
       <Layout style={{ background: 'transparent' }}>
         <Header

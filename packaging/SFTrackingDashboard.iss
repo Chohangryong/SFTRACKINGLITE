@@ -1,7 +1,7 @@
 [Setup]
 AppId={{7D770166-86C6-44D6-B291-4D8D6F5CC8C8}}
 AppName=SF Express Tracking Lite
-AppVersion=0.1.0
+AppVersion=0.1.1
 DefaultDirName={localappdata}\Programs\SFTrackingLite
 DefaultGroupName=SF Express Tracking Lite
 OutputDir=..\build
