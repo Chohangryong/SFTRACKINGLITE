@@ -28,6 +28,10 @@ def _default_frontend_dist_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 
+def _default_runtime_auto_shutdown_enabled() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SF_TRACKING_",
@@ -47,8 +51,16 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
     default_language: str = "zh-CN"
     request_timeout_seconds: int = 30
+    sf_request_max_attempts: int = 3
+    sf_request_retry_initial_delay_seconds: float = 0.5
+    sf_request_retry_max_delay_seconds: float = 2.0
+    sf_request_retry_jitter_ratio: float = 0.3
     lite_fetch_concurrency: int = 2
     lite_result_ttl_minutes: int = 10
+    runtime_auto_shutdown_enabled: bool = Field(default_factory=_default_runtime_auto_shutdown_enabled)
+    runtime_session_heartbeat_seconds: int = 15
+    runtime_session_stale_seconds: int = 90
+    runtime_shutdown_grace_seconds: int = 30
     upload_preview_rows: int = 100
     upload_max_size_mb: int = 20
     frontend_origin: str = "http://127.0.0.1:5173"

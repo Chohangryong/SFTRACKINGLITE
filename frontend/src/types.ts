@@ -95,3 +95,13 @@ export interface LiteRunJobResponse {
   expires_at?: string | null
   result?: LiteRunResponse | null
 }
+
+export interface RuntimeSessionStartResponse {
+  session_id: string
+  started_at: string
+}
+
+export interface RuntimeSessionHeartbeatResponse {
+  ok: boolean
+  shutting_down: boolean
+}

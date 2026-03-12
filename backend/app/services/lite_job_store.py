@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from app.schemas.lite import LiteRunResponse
@@ -14,7 +14,7 @@ class LiteJobRecord:
     job_id: str
     file_name: str
     status: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
     expires_at: datetime | None = None
@@ -31,11 +31,13 @@ class LiteJobRecord:
 
 
 class LiteJobStore:
-    def __init__(self) -> None:
-        # Lite는 결과 원본을 디스크에 임시 저장하고,
-        # 메모리에는 화면 요약에 필요한 job 상태만 남긴다.
+    def __init__(self, on_job_state_changed: Callable[[], None] | None = None) -> None:
         self._jobs: dict[str, LiteJobRecord] = {}
         self._lock = Lock()
+        self._on_job_state_changed = on_job_state_changed
+
+    def set_job_state_callback(self, callback: Callable[[], None] | None) -> None:
+        self._on_job_state_changed = callback
 
     def create(self, file_name: str) -> LiteJobRecord:
         record = LiteJobRecord(
@@ -45,13 +47,14 @@ class LiteJobStore:
         )
         with self._lock:
             self._jobs[record.job_id] = record
+        self._notify_job_state_changed()
         return record
 
     def mark_running(self, job_id: str, prepared: dict[str, Any]) -> None:
         with self._lock:
             record = self._jobs[job_id]
             record.status = "running"
-            record.started_at = datetime.utcnow()
+            record.started_at = datetime.now(UTC)
             record.selected_sheet = prepared["selected_sheet"]
             record.total_rows = prepared["total_rows"]
             record.deduped_rows = len(prepared["rows"])
@@ -63,6 +66,7 @@ class LiteJobStore:
             record.error_message = None
             record.expires_at = None
             record.result = None
+        self._notify_job_state_changed()
 
     def update_progress(self, job_id: str, completed_targets: int, total_targets: int) -> None:
         with self._lock:
@@ -75,7 +79,7 @@ class LiteJobStore:
         with self._lock:
             record = self._jobs[job_id]
             record.status = "completed"
-            record.finished_at = datetime.utcnow()
+            record.finished_at = datetime.now(UTC)
             record.expires_at = expires_at
             record.result = result
             record.selected_sheet = result.selected_sheet
@@ -87,17 +91,19 @@ class LiteJobStore:
             record.remaining_targets = 0
             record.progress_percent = 100
             record.error_message = None
+        self._notify_job_state_changed()
 
     def mark_failed(self, job_id: str, error_message: str) -> None:
         with self._lock:
             record = self._jobs[job_id]
             record.status = "failed"
-            record.finished_at = datetime.utcnow()
+            record.finished_at = datetime.now(UTC)
             record.error_message = error_message
             record.expires_at = None
             record.result = None
             if record.query_target_count and record.completed_targets < record.query_target_count:
                 record.remaining_targets = record.query_target_count - record.completed_targets
+        self._notify_job_state_changed()
 
     def get(self, job_id: str) -> LiteJobRecord | None:
         with self._lock:
@@ -134,3 +140,12 @@ class LiteJobStore:
             and record.expires_at is not None
             and record.expires_at <= datetime.now(UTC)
         )
+
+    def has_active_jobs(self) -> bool:
+        with self._lock:
+            return any(record.status in {"queued", "running"} for record in self._jobs.values())
+
+    def _notify_job_state_changed(self) -> None:
+        callback = self._on_job_state_changed
+        if callback is not None:
+            callback()

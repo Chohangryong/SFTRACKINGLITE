@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -254,7 +254,7 @@ class TrackingService:
         hours = polling_settings.interval_hours
         if tracking.retry_count >= 4:
             hours = max(hours, 6)
-        cutoff = datetime.utcnow() - pd.Timedelta(hours=hours).to_pytimedelta()
+        cutoff = datetime.now(UTC) - pd.Timedelta(hours=hours).to_pytimedelta()
         return tracking.last_queried_at <= cutoff
 
     def _apply_route_response(self, tracking_number: str, route_resp: dict[str, Any]) -> None:
@@ -315,8 +315,8 @@ class TrackingService:
         tracking.last_event_desc = latest_event.event_desc
         tracking.last_event_location = latest_event.event_location
         tracking.last_opcode = latest_event.opcode
-        tracking.last_queried_at = datetime.utcnow()
-        tracking.last_success_at = datetime.utcnow()
+        tracking.last_queried_at = datetime.now(UTC)
+        tracking.last_success_at = datetime.now(UTC)
         tracking.last_error_code = None
         tracking.last_error_message = None
         tracking.retry_count = 0
@@ -328,7 +328,7 @@ class TrackingService:
             tracking = Tracking(tracking_number=tracking_number, current_status="QUERY_FAILED")
             self.session.add(tracking)
         tracking.current_status = "QUERY_FAILED"
-        tracking.last_queried_at = datetime.utcnow()
+        tracking.last_queried_at = datetime.now(UTC)
         tracking.last_error_code = error_code
         tracking.last_error_message = message
         tracking.retry_count += 1
@@ -353,8 +353,8 @@ class TrackingService:
             tracking.current_status_detail = None
             tracking.last_error_code = None
             tracking.last_error_message = None
-        tracking.last_queried_at = datetime.utcnow()
-        tracking.last_success_at = datetime.utcnow()
+        tracking.last_queried_at = datetime.now(UTC)
+        tracking.last_success_at = datetime.now(UTC)
         tracking.is_terminal = False
 
     def _normalize_route(self, route: dict[str, Any]) -> dict[str, Any]:
@@ -362,7 +362,7 @@ class TrackingService:
             route.get("acceptTime")
             or route.get("eventTime")
             or route.get("event_time")
-            or datetime.utcnow().isoformat()
+            or datetime.now(UTC).isoformat()
         )
         opcode = route.get("opCode") or route.get("opcode")
         first_status_code = route.get("firstStatusCode") or route.get("first_status_code")

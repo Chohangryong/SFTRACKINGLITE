@@ -85,7 +85,6 @@ async def create_lite_run_job(
     job_store: LiteJobStore = request.app.state.lite_job_store
     job = job_store.create(file_name=file_name)
 
-    # 조회는 오래 걸릴 수 있으므로 job만 먼저 만들고 백그라운드에서 실행한다.
     asyncio.create_task(
         _run_lite_job(
             app=request.app,
@@ -157,7 +156,7 @@ def download_lite_run_result(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'},
     )
 
 
@@ -189,7 +188,7 @@ async def export_lite_upload(
     return Response(
         content=payload,
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'},
     )
 
 
@@ -210,7 +209,7 @@ def export_lite_result(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'},
     )
 
 
@@ -230,7 +229,6 @@ async def _run_lite_job(
     result_store = LiteResultStore(settings)
 
     def worker() -> None:
-        # 요청 생명주기와 분리된 백그라운드 작업이라 worker 안에서 별도 세션을 만든다.
         with app.state.database.session() as session:
             service = LiteService(session, settings)
             prepared = service.prepare_content(
@@ -258,7 +256,6 @@ async def _run_lite_job(
 
 
 def summarize_job_result(result: LiteRunResponse) -> LiteRunResponse:
-    # 화면 요약에는 rows 전체가 필요 없어서 메모리에는 빈 리스트만 남긴다.
     return LiteRunResponse(
         file_name=result.file_name,
         selected_sheet=result.selected_sheet,

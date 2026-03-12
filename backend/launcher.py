@@ -21,11 +21,16 @@ PORT = 8000
 APP_URL = f"http://{HOST}:{PORT}/lite"
 HEALTH_URL = f"http://{HOST}:{PORT}/api/health"
 STARTUP_TIMEOUT_SECONDS = 30
+RECONNECT_TIMEOUT_SECONDS = 8
 
 
 def _log_path() -> Path:
     local_appdata = os.environ.get("LOCALAPPDATA")
-    base_dir = Path(local_appdata) / APP_DATA_DIR_NAME if local_appdata else Path.home() / "AppData" / "Local" / APP_DATA_DIR_NAME
+    base_dir = (
+        Path(local_appdata) / APP_DATA_DIR_NAME
+        if local_appdata
+        else Path.home() / "AppData" / "Local" / APP_DATA_DIR_NAME
+    )
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir / "launcher.log"
 
@@ -39,12 +44,15 @@ def log_message(message: str) -> None:
         pass
 
 
-def is_health_ready() -> bool:
+def get_health_state() -> dict[str, object] | None:
     try:
         response = httpx.get(HEALTH_URL, timeout=1.0)
-        return response.status_code == 200
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+        return payload if isinstance(payload, dict) else None
     except Exception:
-        return False
+        return None
 
 
 def is_port_in_use() -> bool:
@@ -65,7 +73,7 @@ def wait_and_open_browser() -> None:
     deadline = time.time() + STARTUP_TIMEOUT_SECONDS
     log_message("browser wait thread started")
     while time.time() < deadline:
-        if is_health_ready():
+        if get_health_state():
             log_message("health ready, opening browser")
             webbrowser.open(APP_URL)
             return
@@ -73,12 +81,41 @@ def wait_and_open_browser() -> None:
     show_error("서버가 시작되지 않았습니다. 잠시 후 다시 실행해 주세요.")
 
 
+def try_attach_to_existing_server() -> bool:
+    health = get_health_state()
+    if not health:
+        return False
+
+    if not bool(health.get("shutting_down", False)):
+        log_message("existing app detected, opening browser only")
+        webbrowser.open(APP_URL)
+        return True
+
+    log_message("existing app detected in shutting_down state, opening browser and waiting for reconnect")
+    webbrowser.open(APP_URL)
+
+    deadline = time.time() + RECONNECT_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        health = get_health_state()
+        if not health:
+            if not is_port_in_use():
+                log_message("existing shutting_down app exited before reconnect; starting new server")
+                return False
+            time.sleep(0.5)
+            continue
+        if not bool(health.get("shutting_down", False)):
+            log_message("existing app canceled shutdown after reconnect; reusing server")
+            return True
+        time.sleep(0.5)
+
+    log_message("existing app still shutting_down after reconnect window; reusing current server")
+    return True
+
+
 def main() -> None:
     try:
         log_message("launcher started")
-        if is_health_ready():
-            log_message("existing app detected, opening browser only")
-            webbrowser.open(APP_URL)
+        if try_attach_to_existing_server():
             return
 
         if is_port_in_use():
@@ -94,16 +131,32 @@ def main() -> None:
             f"starting uvicorn host={HOST} port={PORT} data_dir={settings.data_dir} frontend_dist={settings.frontend_dist_dir}"
         )
 
-        threading.Thread(target=wait_and_open_browser, daemon=True).start()
-        uvicorn.run(
-            create_app(settings),
+        server: uvicorn.Server | None = None
+
+        def request_shutdown(reason: str) -> None:
+            nonlocal server
+            log_message(f"shutdown requested: {reason}")
+            if server is not None:
+                server.should_exit = True
+
+        app = create_app(
+            settings,
+            shutdown_requester=request_shutdown,
+            runtime_logger=log_message,
+        )
+        config = uvicorn.Config(
+            app,
             host=HOST,
             port=PORT,
             log_level="warning",
             access_log=False,
             log_config=None,
         )
-        log_message("uvicorn.run returned")
+        server = uvicorn.Server(config)
+
+        threading.Thread(target=wait_and_open_browser, daemon=True).start()
+        server.run()
+        log_message("uvicorn server exited")
     except Exception as exc:
         log_message(f"unhandled exception: {exc}")
         log_message(traceback.format_exc())

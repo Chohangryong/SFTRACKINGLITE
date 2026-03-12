@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -58,7 +58,7 @@ class UploadService:
                 "preview_rows": parsed.preview_rows,
             },
             column_mapping=parsed.detected_mapping,
-            expires_at=datetime.utcnow() + timedelta(days=7),
+            expires_at=datetime.now(UTC) + timedelta(days=7),
         )
         self.session.add(batch)
         self.session.flush()
@@ -144,7 +144,7 @@ class UploadService:
 
             order = self.session.scalar(select(Order).where(Order.order_number == order_number))
             if order is None:
-                order = Order(order_number=order_number, raw_data=row, first_seen_at=datetime.utcnow())
+                order = Order(order_number=order_number, raw_data=row, first_seen_at=datetime.now(UTC))
                 self.session.add(order)
                 self.session.flush()
             else:
@@ -188,7 +188,7 @@ class UploadService:
         batch.success_rows = success_rows
         batch.skipped_rows = skipped_rows
         batch.error_rows = error_rows
-        batch.confirmed_at = datetime.utcnow()
+        batch.confirmed_at = datetime.now(UTC)
         batch.column_mapping = mapping
         self.session.commit()
 

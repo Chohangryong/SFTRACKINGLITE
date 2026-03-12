@@ -1,8 +1,11 @@
-﻿import { RocketOutlined, SettingOutlined } from '@ant-design/icons'
+import { RocketOutlined, SettingOutlined } from '@ant-design/icons'
+import axios from 'axios'
 import { Layout, Menu, Typography } from 'antd'
 import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
+import { endRuntimeSession, heartbeatRuntimeSession, startRuntimeSession } from '../api'
 import { APP_VERSION } from '../appVersion'
 
 const { Header, Sider, Content } = Layout
@@ -10,6 +13,86 @@ const { Header, Sider, Content } = Layout
 export function LayoutShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const selectedKey = location.pathname.startsWith('/settings') ? '/settings' : '/lite'
+  const sessionIdRef = useRef<string | null>(null)
+  const startInFlightRef = useRef(false)
+
+  useEffect(() => {
+    let disposed = false
+
+    const ensureSession = async () => {
+      if (disposed || startInFlightRef.current || sessionIdRef.current) {
+        return
+      }
+      startInFlightRef.current = true
+      try {
+        const response = await startRuntimeSession()
+        if (!disposed) {
+          sessionIdRef.current = response.session_id
+        }
+      } catch {
+        sessionIdRef.current = null
+      } finally {
+        startInFlightRef.current = false
+      }
+    }
+
+    const sendHeartbeat = async () => {
+      if (disposed) {
+        return
+      }
+      if (!sessionIdRef.current) {
+        await ensureSession()
+        return
+      }
+      try {
+        await heartbeatRuntimeSession(sessionIdRef.current)
+      } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          sessionIdRef.current = null
+          await ensureSession()
+        }
+      }
+    }
+
+    const sendEndBeacon = () => {
+      const sessionId = sessionIdRef.current
+      if (!sessionId) {
+        return
+      }
+      sessionIdRef.current = null
+      const payload = JSON.stringify({ session_id: sessionId })
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/runtime/session/end', new Blob([payload], { type: 'application/json' }))
+        return
+      }
+      void endRuntimeSession(sessionId)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void sendHeartbeat()
+      }
+    }
+
+    void ensureSession()
+
+    const heartbeatTimer = window.setInterval(() => {
+      void sendHeartbeat()
+    }, 15000)
+
+    window.addEventListener('beforeunload', sendEndBeacon)
+    window.addEventListener('pagehide', sendEndBeacon)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      disposed = true
+      window.clearInterval(heartbeatTimer)
+      window.removeEventListener('beforeunload', sendEndBeacon)
+      window.removeEventListener('pagehide', sendEndBeacon)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      sendEndBeacon()
+    }
+  }, [])
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import httpx
+
 
 def test_upload_confirm_creates_no_tracking_row(client) -> None:
     response = client.post(
@@ -77,6 +79,67 @@ def test_upload_confirm_refreshes_tracking_with_mocked_sf(client, mocker) -> Non
     events = client.get("/api/trackings/SF123/events")
     assert events.status_code == 200
     assert len(events.json()) == 1
+
+
+def test_upload_confirm_retries_sf_timeout_and_succeeds(client, mocker) -> None:
+    client.post(
+        "/api/settings/api-keys",
+        json={
+            "label": "Sandbox",
+            "environment": "sandbox",
+            "partner_id": "PARTNER",
+            "checkword": "CHECKWORD",
+            "is_active": True,
+        },
+    )
+
+    success_response = mocker.Mock()
+    success_response.raise_for_status.return_value = None
+    success_response.json.return_value = {
+        "apiResultCode": "A1000",
+        "apiResultData": json.dumps(
+            {
+                "errorCode": "S0000",
+                "routeResps": [
+                    {
+                        "mailNo": "SF123",
+                        "routes": [
+                            {
+                                "acceptTime": "2026-03-08 10:00:00",
+                                "acceptAddress": "Seoul",
+                                "opCode": "80",
+                                "firstStatusCode": "80",
+                                "secondaryStatusCode": "80",
+                                "remark": "Delivered",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+    }
+
+    http_client = mocker.Mock()
+    http_client.post.side_effect = [httpx.ReadTimeout("timeout"), success_response]
+    client_context = mocker.MagicMock()
+    client_context.__enter__.return_value = http_client
+    mocker.patch("app.services.sf_client.httpx.Client", return_value=client_context)
+    mocker.patch("app.services.sf_client.random.uniform", return_value=0.0)
+    mocker.patch("app.services.sf_client.time.sleep")
+
+    response = client.post(
+        "/api/uploads",
+        files={"file": ("orders.csv", b"order_number,tracking_number\nORDER-2,SF123\n", "text/csv")},
+    )
+    batch_id = response.json()["batch_id"]
+
+    confirm = client.post(f"/api/uploads/{batch_id}/confirm", json={"mapping": {}})
+    assert confirm.status_code == 200
+    assert confirm.json()["refresh_summary"]["refreshed"] == 1
+
+    detail = client.get("/api/trackings/SF123")
+    assert detail.status_code == 200
+    assert detail.json()["current_status"] == "DELIVERED"
 
 
 def test_upload_confirm_marks_query_unavailable_when_sf_returns_reason(client, mocker) -> None:

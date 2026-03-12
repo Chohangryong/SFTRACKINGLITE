@@ -7,6 +7,8 @@ import type {
   LiteAnalyzeResponse,
   LiteRunJobCreateResponse,
   LiteRunJobResponse,
+  RuntimeSessionHeartbeatResponse,
+  RuntimeSessionStartResponse,
 } from './types'
 
 const client = axios.create({
@@ -112,4 +114,20 @@ export async function downloadLiteRunResult(
     responseType: 'blob',
   })
   return response.data as Blob
+}
+
+export async function startRuntimeSession() {
+  const response = await client.post<RuntimeSessionStartResponse>('/runtime/session/start')
+  return response.data
+}
+
+export async function heartbeatRuntimeSession(sessionId: string) {
+  const response = await client.post<RuntimeSessionHeartbeatResponse>('/runtime/session/heartbeat', {
+    session_id: sessionId,
+  })
+  return response.data
+}
+
+export async function endRuntimeSession(sessionId: string) {
+  await client.post('/runtime/session/end', { session_id: sessionId })
 }
