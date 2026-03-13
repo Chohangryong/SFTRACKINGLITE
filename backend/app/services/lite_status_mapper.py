@@ -15,11 +15,11 @@ import pandas as pd
 
 ARRIVED_REMARK_TERMS = (
     "\u987a\u4e30\u81ea\u52a9\u67dc",
-    "\u9999\u6e2f\u5916\u90e8\u8d44\u6e90",
 )
 COLLECTED_REMARK_TERMS = (
     "\u5df2\u6d3e\u9001\u81f3\u672c\u4eba",
     "\u5df2\u6d3e\u9001\u6210\u529f",
+    "\u5df2\u6d3e\u9001\u81f3\uff08\u9999\u6e2f\u5916\u90e8\u8d44\u6e90\uff09",
     "\u8f6c\u5bc4\u5feb\u4ef6\u5df2\u6d3e\u9001\u6210\u529f",
 )
 RETURN_REMARK_TERMS = (

@@ -35,6 +35,24 @@ def test_map_route_response_splits_80_401_by_remark() -> None:
     assert collected.status == "COLLECTED"
 
 
+def test_map_route_response_treats_hk_external_resource_as_collected() -> None:
+    result = map_route_response(
+        {
+            "routes": [
+                {
+                    "acceptTime": "2026-03-10 10:30:00",
+                    "opCode": "80",
+                    "firstStatusCode": "4",
+                    "secondaryStatusCode": "401",
+                    "remark": "\u5df2\u6d3e\u9001\u81f3\uff08\u9999\u6e2f\u5916\u90e8\u8d44\u6e90\uff09\u3002\u60a8\u7684\u4f53\u9a8c\u5bf9\u4e8e\u6211\u4eec\u81f3\u5173\u91cd\u8981\u3002",
+                }
+            ]
+        }
+    )
+
+    assert result.status == "COLLECTED"
+
+
 def test_map_route_response_handles_query_unavailable() -> None:
     result = map_route_response(
         {
